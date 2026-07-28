@@ -2,17 +2,20 @@
  * Shared diagram storage for jarbobo — used by BOTH the MCP server (writer) and
  * the extension (reader / layout-writeback / custom editor).
  *
- * Two on-disk shapes coexist:
+ * Diagram files live wherever they're semantically relevant — a NEW diagram's
+ * container file (one per lineage, holding every version) is placed next to
+ * the code it documents:
+ *   - all its code refs point at one file  -> named after THAT file, alongside it
+ *   - refs span several files under one dir -> named after that shared directory
+ *     (the "subsystem"), placed in it
+ *   - no refs at all                       -> named after the title, at the
+ *     workspace root (or cwd)
+ * See chooseDiagramLocation(). There's no dedicated diagrams folder — a
+ * workspace is searched recursively (walkDiagramFiles) to find/list them.
  *
- *   LOCAL (new default, git-committable): one file per diagram lineage at
- *     <workspace>/.jarbobo/<id>.jarbobo — a "container" holding every version:
- *       // <header comment pointing people at the extension>
- *       { "id": "...", "versions": [ <diagram v1>, <diagram v2>, ... ] }
- *
- *   GLOBAL (legacy, read for backward compatibility): a versioned lineage of
- *     separate files at ~/.jarbobo/diagrams/<id>/v<N>.json.
- *
- * New diagrams are written LOCAL when a workspace is known, else GLOBAL.
+ * GLOBAL (legacy, read only for backward compatibility with diagrams saved
+ * before this scheme existed): a versioned lineage of separate files at
+ * ~/.jarbobo/diagrams/<id>/v<N>.json. Nothing new is ever written there.
  */
 import * as fs from 'fs';
 import * as os from 'os';
@@ -20,7 +23,6 @@ import * as path from 'path';
 
 export const GLOBAL_HOME = path.join(os.homedir(), '.jarbobo');
 export const GLOBAL_DIAGRAMS = path.join(GLOBAL_HOME, 'diagrams');
-export const LOCAL_DIRNAME = '.jarbobo';
 export const JARBOBO_EXT = '.jarbobo';
 
 // Prepended to every local .jarbobo file so someone who opens it as plain text
@@ -77,8 +79,9 @@ export function writeContainer(file: string, c: Container): void {
     fs.writeFileSync(file, serializeContainer(c));
 }
 
-/** Workspace root for LOCAL storage. JARBOBO_WORKSPACE (set by the extension's
- *  MCP registration) wins; otherwise walk up from cwd to the nearest .git. */
+/** Workspace root, used as a fallback anchor when a diagram has no code refs
+ *  to place itself by. JARBOBO_WORKSPACE (set by the extension's MCP
+ *  registration) wins; otherwise walk up from cwd to the nearest .git. */
 export function findWorkspaceRoot(): string | undefined {
     const env = process.env.JARBOBO_WORKSPACE;
     if (env && fs.existsSync(env)) { return env; }
@@ -91,11 +94,90 @@ export function findWorkspaceRoot(): string | undefined {
     }
 }
 
-export function localDiagramsDir(): string | undefined {
-    const root = findWorkspaceRoot();
-    return root ? path.join(root, LOCAL_DIRNAME) : undefined;
+// Directories never descended into when looking for .jarbobo files, EXCEPT
+// a literal `.jarbobo` dir — that's the old convention's storage folder, and
+// walking into it is how existing diagrams saved there stay discoverable.
+const WALK_SKIP_DIRS = new Set([
+    'node_modules', '.git', 'dist', 'build', 'out', 'target', '.next', 'vendor', '.cache', 'coverage',
+]);
+const WALK_MAX_FILES = 5000; // safety cap for pathological repos
+
+/** Recursively find every `*.jarbobo` file under `root` (mtime order not
+ *  guaranteed — callers that care about recency should stat and sort). */
+export function walkDiagramFiles(root: string): string[] {
+    const results: string[] = [];
+    const walk = (dir: string) => {
+        if (results.length >= WALK_MAX_FILES) { return; }
+        let entries: fs.Dirent[];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+            if (results.length >= WALK_MAX_FILES) { return; }
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+                if (WALK_SKIP_DIRS.has(e.name)) { continue; }
+                if (e.name.startsWith('.') && e.name !== '.jarbobo') { continue; }
+                walk(full);
+            } else if (e.isFile() && e.name.endsWith(JARBOBO_EXT)) {
+                results.push(full);
+            }
+        }
+    };
+    walk(root);
+    return results;
 }
 
-export function localFileForId(id: string, dir = localDiagramsDir()): string | undefined {
-    return dir ? path.join(dir, id + JARBOBO_EXT) : undefined;
+/** Every source file a diagram's elements reference (absolute paths, deduped). */
+export function collectRefFiles(diagram: Record<string, unknown>): string[] {
+    const files = new Set<string>();
+    const visit = (el: Record<string, unknown>) => {
+        if (typeof el.file === 'string') { files.add(el.file); }
+        if (Array.isArray(el.refs)) {
+            for (const r of el.refs as Array<Record<string, unknown>>) {
+                if (typeof r.file === 'string') { files.add(r.file); }
+            }
+        }
+    };
+    for (const key of ['nodes', 'edges', 'groups', 'classes', 'relations', 'participants', 'messages', 'lanes', 'items', 'tracks']) {
+        const arr = diagram[key];
+        if (Array.isArray(arr)) { arr.forEach((el) => visit(el as Record<string, unknown>)); }
+    }
+    return [...files];
+}
+
+function longestCommonDir(files: string[]): string {
+    const dirs = files.map((f) => path.dirname(f).split(path.sep));
+    let common = dirs[0];
+    for (const d of dirs.slice(1)) {
+        let i = 0;
+        while (i < common.length && i < d.length && common[i] === d[i]) { i++; }
+        common = common.slice(0, i);
+    }
+    return common.join(path.sep) || path.sep;
+}
+
+function slugForFile(name: string): string {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'diagram';
+}
+
+/** Where a NEW diagram's container file should live: named and placed after
+ *  whatever code it documents, rather than in a dedicated diagrams folder. */
+export function chooseDiagramLocation(
+    diagram: Record<string, unknown>,
+    opts: { workspaceRoot?: string; title?: string },
+): { dir: string; name: string } {
+    const refs = collectRefFiles(diagram);
+    if (!refs.length) {
+        return { dir: opts.workspaceRoot ?? process.cwd(), name: slugForFile(opts.title ?? 'diagram') };
+    }
+    if (refs.length === 1 || new Set(refs).size === 1) {
+        const file = refs[0];
+        return { dir: path.dirname(file), name: slugForFile(path.basename(file, path.extname(file))) };
+    }
+    const commonDir = longestCommonDir(refs);
+    // refs span totally unrelated top-level areas (or the workspace root
+    // itself) — a "subsystem" name isn't meaningful, fall back to the title
+    if (!commonDir || commonDir === opts.workspaceRoot || commonDir === path.sep) {
+        return { dir: opts.workspaceRoot ?? process.cwd(), name: slugForFile(opts.title ?? 'diagram') };
+    }
+    return { dir: commonDir, name: slugForFile(path.basename(commonDir)) };
 }

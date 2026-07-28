@@ -4,9 +4,14 @@
  * Jarbobo panel in Cursor/VS Code. Speaks stdio MCP; delivers diagrams to the
  * extension over a localhost HTTP port published in ~/.jarbobo/port.json.
  *
- * Diagrams are versioned lineages: ~/.jarbobo/diagrams/<id>/v<N>.json.
- * Calling a draw tool WITHOUT an id creates a new lineage (new editor tab);
- * WITH an id it saves the next version and updates the existing tab in place.
+ * A new diagram's container file (one per lineage, holding every version) is
+ * placed next to the code it documents — see chooseDiagramLocation() in
+ * storage.ts. Calling a draw tool WITHOUT an id creates a new lineage (new
+ * editor tab); WITH an id it saves the next version and updates the existing
+ * tab in place, wherever that file already lives.
+ *
+ * ~/.jarbobo/diagrams/<id>/v<N>.json is a legacy layout, read (never written)
+ * for backward compatibility with diagrams saved before this scheme existed.
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -15,14 +20,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
-    JARBOBO_EXT, localDiagramsDir, localFileForId, readContainer, writeContainer,
+    JARBOBO_EXT, findWorkspaceRoot, walkDiagramFiles, chooseDiagramLocation, readContainer, writeContainer,
 } from './storage.js';
 import { exportDiagram, suggestFilename, type Diagram, type ExportFormat } from './exporters.js';
 
 const HOME = path.join(os.homedir(), '.jarbobo');
 const PORT_FILE = path.join(HOME, 'port.json');
-const DIAGRAMS_DIR = path.join(HOME, 'diagrams');
-fs.mkdirSync(DIAGRAMS_DIR, { recursive: true });
+const DIAGRAMS_DIR = path.join(HOME, 'diagrams'); // legacy — read only, never written
 
 // Interactivity properties shared by every drawable element. Spelled out in
 // full so the LLM knows exactly what affordances it can attach.
@@ -92,17 +96,30 @@ function slugify(title: string): string {
     return `${s}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-// A diagram lives EITHER as a local single-file container (new default,
-// git-committable) OR as a legacy global versioned lineage (read for backward
-// compatibility). resolveStore() finds which, preferring local.
+// A diagram lives EITHER as a container file (one per lineage, holding every
+// version) sitting wherever chooseDiagramLocation() put it, OR — for anything
+// saved before that scheme existed — as a legacy global versioned lineage
+// (read only). resolveStore() finds which, preferring the container.
 type Store =
     | { kind: 'container'; file: string }
     | { kind: 'lineage'; dir: string };
 
+// Containers aren't kept at a fixed path anymore, so finding one by id means
+// walking the workspace and checking each .jarbobo file's own `id` field.
+function findContainerFileById(id: string): string | undefined {
+    const root = findWorkspaceRoot() ?? process.cwd();
+    for (const file of walkDiagramFiles(root)) {
+        try {
+            if (readContainer(file).id === id) { return file; }
+        } catch { /* not a valid container — skip */ }
+    }
+    return undefined;
+}
+
 function resolveStore(id: string): Store | undefined {
-    const lf = localFileForId(id);
-    if (lf && fs.existsSync(lf)) { return { kind: 'container', file: lf }; }
-    const dir = path.join(DIAGRAMS_DIR, id);
+    const file = findContainerFileById(id);
+    if (file) { return { kind: 'container', file }; }
+    const dir = path.join(DIAGRAMS_DIR, id); // legacy global — read only
     if (fs.existsSync(dir)) { return { kind: 'lineage', dir }; }
     return undefined;
 }
@@ -164,11 +181,13 @@ async function postToPanel(payload: Record<string, unknown>): Promise<{ delivere
     }
 }
 
-function withMeta(diagram: Record<string, unknown>, id: string, version: number) {
+function withMeta(diagram: Record<string, unknown>, id: string, version: number, knownFile?: string) {
     // _file lets the extension persist user rearrangements back into this
-    // diagram's storage (the local .jarbobo container, or a legacy v<N>.json);
-    // _versions feeds the panel's version picker. Resolved from the store that
-    // was just written, so it points at wherever this diagram actually lives.
+    // diagram's storage (its .jarbobo container, or a legacy v<N>.json);
+    // _versions feeds the panel's version picker. `knownFile` short-circuits
+    // the workspace-wide id lookup right after WE just wrote it; otherwise
+    // resolved via resolveStore so it points at wherever it actually lives.
+    if (knownFile) { return { ...diagram, _id: id, _version: version, _versions: [version], _file: knownFile }; }
     const store = resolveStore(id);
     return {
         ...diagram,
@@ -323,16 +342,23 @@ async function deliver(diagram: Record<string, unknown>, editId?: string, baseVe
         id = slugify(String(diagram.title ?? 'diagram'));
         version = 1;
         attachAnchors(diagram); // snapshot referenced line text for drift recovery
-        // NEW diagrams go LOCAL (git-committable) when a workspace is known,
-        // otherwise fall back to the global lineage for backward compatibility.
-        const lf = localFileForId(id);
-        if (lf) {
-            writeContainer(lf, { id, versions: [diagram] });
-        } else {
-            const dir = path.join(DIAGRAMS_DIR, id);
-            fs.mkdirSync(dir, { recursive: true });
-            fs.writeFileSync(path.join(dir, `v${version}.json`), JSON.stringify(diagram, null, 2));
+        // NEW diagrams are named and placed after the code they document —
+        // see chooseDiagramLocation(). `id` (above) is the internal handle
+        // used for edits/lookups regardless of where the file sits or what
+        // it's named; the two are independent on purpose.
+        const { dir, name } = chooseDiagramLocation(diagram, { workspaceRoot: findWorkspaceRoot(), title: String(diagram.title ?? 'diagram') });
+        let file = path.join(dir, name + JARBOBO_EXT);
+        // an unrelated diagram might already have claimed that exact name —
+        // disambiguate rather than clobber it
+        if (fs.existsSync(file)) {
+            try {
+                if (readContainer(file).id !== id) { file = path.join(dir, `${name}-${id.slice(-4)}${JARBOBO_EXT}`); }
+            } catch { file = path.join(dir, `${name}-${id.slice(-4)}${JARBOBO_EXT}`); }
         }
+        writeContainer(file, { id, versions: [diagram] });
+        const meta = withMeta(diagram, id, version, file);
+        const { delivered, err } = await postToPanel(meta);
+        return { id, version, file, delivered, err };
     }
     const meta = withMeta(diagram, id, version);
     const { delivered, err } = await postToPanel(meta);
@@ -707,22 +733,19 @@ server.registerTool(
     async () => {
         const lines: string[] = [];
         const seen = new Set<string>();
-        // LOCAL diagrams (this workspace's .jarbobo/*.jarbobo containers) first
-        const localDir = localDiagramsDir();
-        if (localDir) {
-            let files: string[] = [];
-            try { files = fs.readdirSync(localDir).filter((f) => f.endsWith(JARBOBO_EXT)); } catch { /* no local dir */ }
-            for (const f of files) {
-                try {
-                    const c = readContainer(path.join(localDir, f));
-                    const id = c.id || f.slice(0, -JARBOBO_EXT.length);
-                    const n = c.versions.length;
-                    if (!n) { continue; }
-                    seen.add(id);
-                    const latest = c.versions[n - 1];
-                    lines.push(`- id: "${id}" · ${latest.type} · "${latest.title}" · latest v${n} (${n} version${n > 1 ? 's' : ''}) · local`);
-                } catch { /* unreadable */ }
-            }
+        // diagrams found anywhere in the workspace, next to the code they document
+        const workspaceRoot = findWorkspaceRoot() ?? process.cwd();
+        for (const file of walkDiagramFiles(workspaceRoot)) {
+            try {
+                const c = readContainer(file);
+                const id = c.id || path.basename(file, JARBOBO_EXT);
+                const n = c.versions.length;
+                if (!n) { continue; }
+                seen.add(id);
+                const latest = c.versions[n - 1];
+                const rel = path.relative(workspaceRoot, file);
+                lines.push(`- id: "${id}" · ${latest.type} · "${latest.title}" · latest v${n} (${n} version${n > 1 ? 's' : ''}) · ${rel}`);
+            } catch { /* unreadable */ }
         }
         // GLOBAL (legacy) — skip ids already shown from the local workspace
         let entries: fs.Dirent[] = [];

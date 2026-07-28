@@ -123,7 +123,7 @@ Two processes, one localhost bridge — so **any number of MCP clients draw into
 Claude (Cursor agent / Claude Code / …)
    │  stdio MCP: draw_graph / draw_sequence_diagram / draw_class_diagram
    ▼
-mcp-server.js        validates (zod) → saves ~/.jarbobo/diagrams/*.json
+mcp-server.js        validates (zod) → saves a .jarbobo file next to the code it documents
    │  POST /diagram  (port discovered via ~/.jarbobo/port.json)
    ▼
 extension host       one webview tab per diagram · status bar · persists layouts

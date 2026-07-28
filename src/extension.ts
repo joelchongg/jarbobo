@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import {
-    JARBOBO_EXT, localDiagramsDir, readContainer, writeContainer, parseContainer,
+    JARBOBO_EXT, walkDiagramFiles, readContainer, writeContainer, parseContainer,
     serializeContainer, isContainerFile, stripMeta, type Container,
 } from './storage.js';
 import { EXPORTERS, exportDiagram, suggestFilename, type Diagram, type ExportFormat } from './exporters.js';
@@ -149,9 +149,9 @@ function registerMcpProvider(context: vscode.ExtensionContext) {
         vscode.lm.registerMcpServerDefinitionProvider('jarbobo.mcp-servers', {
             provideMcpServerDefinitions: () => {
                 // Tell the MCP server which workspace it's drawing for, so NEW
-                // diagrams are saved into <workspace>/.jarbobo/ (git-committable)
-                // rather than the global ~/.jarbobo. Recomputed per call so it
-                // tracks the currently-open folder.
+                // diagrams are placed next to the code they document within it
+                // (git-committable) rather than the legacy global ~/.jarbobo.
+                // Recomputed per call so it tracks the currently-open folder.
                 const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
                 const env: Record<string, string> = ws ? { JARBOBO_WORKSPACE: ws } : {};
                 return [
@@ -635,12 +635,13 @@ async function exportDiagramFlow(panel: vscode.WebviewPanel, diagram: Record<str
     else if (choice === reveal) { vscode.commands.executeCommand('revealFileInOS', target); }
 }
 
-// Suggest a filename in the workspace's .jarbobo/exports folder (or alongside the
-// workspace root), matching the MCP tool's default location where possible.
+// Suggest a filename in an "exports" folder beside the diagram's own storage
+// (matching the MCP tool's default location), or beside the workspace root
+// for a diagram that has no on-disk file yet (e.g. never delivered/saved).
 function defaultExportUri(diagram: Diagram, ext: string): vscode.Uri {
     const name = suggestFilename(diagram, ext);
-    const local = localDiagramsDir();
-    const dir = local ? path.join(local, 'exports') : (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir());
+    const file = (diagram as unknown as { _file?: string })._file;
+    const dir = file ? path.join(path.dirname(file), 'exports') : (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir());
     return vscode.Uri.file(path.join(dir, name));
 }
 
@@ -768,62 +769,29 @@ function containerPayload(file: string, version?: number): Record<string, unknow
 
 type HistoryEntry = { label: string; description: string; mtime: number; load: () => unknown };
 
+// Diagrams found by walking the CURRENT workspace folder(s) — scoped to this
+// project, not every diagram jarbobo has ever saved anywhere on the machine.
+// (Legacy global ~/.jarbobo/diagrams entries are deliberately excluded here;
+// they're still readable via loadLineageVersion for a diagram already open.)
 function historyEntries(): HistoryEntry[] {
     const entries: HistoryEntry[] = [];
-    // LOCAL containers from this workspace's .jarbobo/ (git-committable)
-    const localDir = localDiagramsDir();
-    if (localDir) {
-        let files: string[] = [];
-        try { files = fs.readdirSync(localDir).filter(f => f.endsWith(JARBOBO_EXT)); } catch { /* none */ }
-        for (const f of files) {
+    const roots = vscode.workspace.workspaceFolders?.map(f => f.uri.fsPath) ?? [];
+    for (const root of roots) {
+        for (const full of walkDiagramFiles(root)) {
             try {
-                const full = path.join(localDir, f);
                 const c = readContainer(full);
                 const n = c.versions.length;
                 if (!n) { continue; }
                 const latest = c.versions[n - 1] as { title?: string; type?: string };
                 const mtime = fs.statSync(full).mtimeMs;
                 entries.push({
-                    label: latest.title || c.id || f,
-                    description: `${latest.type} · v${n}${n > 1 ? ` (${n} versions)` : ''} · local · ${new Date(mtime).toLocaleString()}`,
+                    label: latest.title || c.id || path.basename(full, JARBOBO_EXT),
+                    description: `${latest.type} · v${n}${n > 1 ? ` (${n} versions)` : ''} · ${path.relative(root, full)} · ${new Date(mtime).toLocaleString()}`,
                     mtime,
                     load: () => containerPayload(full),
                 });
             } catch { /* skip unreadable */ }
         }
-    }
-    // GLOBAL (legacy) diagrams
-    let dirents: fs.Dirent[] = [];
-    try {
-        dirents = fs.readdirSync(DIAGRAMS_DIR, { withFileTypes: true });
-    } catch {
-        return entries;
-    }
-    for (const e of dirents) {
-        try {
-            if (e.isDirectory()) {
-                const versions = listVersions(e.name);
-                if (!versions.length) { continue; }
-                const latest = versions[versions.length - 1];
-                const file = path.join(DIAGRAMS_DIR, e.name, `v${latest}.json`);
-                const d = JSON.parse(fs.readFileSync(file, 'utf8'));
-                entries.push({
-                    label: d.title || e.name,
-                    description: `${d.type} · v${latest}${versions.length > 1 ? ` (${versions.length} versions)` : ''} · ${new Date(fs.statSync(file).mtimeMs).toLocaleString()}`,
-                    mtime: fs.statSync(file).mtimeMs,
-                    load: () => loadLineageVersion(e.name, latest),
-                });
-            } else if (e.name.endsWith('.json')) {
-                const full = path.join(DIAGRAMS_DIR, e.name);
-                const d = JSON.parse(fs.readFileSync(full, 'utf8'));
-                entries.push({
-                    label: d.title || e.name,
-                    description: `${d.type} · ${new Date(Number(e.name.split('-')[0]) || fs.statSync(full).mtimeMs).toLocaleString()}`,
-                    mtime: fs.statSync(full).mtimeMs,
-                    load: () => loadDiagramFile(e.name),
-                });
-            }
-        } catch { /* skip unreadable entries */ }
     }
     return entries.sort((a, b) => b.mtime - a.mtime);
 }
