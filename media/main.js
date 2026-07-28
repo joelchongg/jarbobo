@@ -603,7 +603,7 @@
   }
 
   // Synthesise an SVG for the cytoscape graph from its live node/edge geometry.
-  function buildGraphSvg() {
+  function buildGraphSvg(noBg) {
     const cy = window.__cy;
     if (!cy) { throw new Error('graph not ready'); }
     exportReg = []; // the graph path doesn't use bindSvgItem — own the registry
@@ -612,7 +612,9 @@
     const W = Math.max(1, Math.ceil(bb.w + PAD * 2));
     const H = Math.max(1, Math.ceil(bb.h + PAD * 2));
     const ox = PAD - bb.x1, oy = PAD - bb.y1;
-    const P = [`<rect x="0" y="0" width="${W}" height="${H}" fill="${escX(BG)}"/>`];
+    // standalone SVG/PNG get a baked-in background; the interactive HTML skips
+    // it (the page supplies the color) so panning doesn't drag a visible rect
+    const P = noBg ? [] : [`<rect x="0" y="0" width="${W}" height="${H}" fill="${escX(BG)}"/>`];
     cy.nodes().forEach((n) => {
       if (!n.isParent()) { return; }
       const b = n.boundingBox();
@@ -622,8 +624,9 @@
     });
     cy.edges().forEach((e) => {
       const s = e.source().position(), t = e.target().position();
-      const p1 = clipToBox(s, t, e.source().boundingBox());
-      const p2 = clipToBox(t, s, e.target().boundingBox());
+      // clip to the drawn box: outer dims include the node style's padding
+      const p1 = clipToBox(s, t, { w: e.source().outerWidth(), h: e.source().outerHeight() });
+      const p2 = clipToBox(t, s, { w: e.target().outerWidth(), h: e.target().outerHeight() });
       const color = e.data('color') || MUTED;
       const ls = e.data('lstyle');
       const dash = ls === 'dashed' ? ' stroke-dasharray="6 4"' : ls === 'dotted' ? ' stroke-dasharray="2 3"' : '';
@@ -641,12 +644,15 @@
     cy.nodes().forEach((n) => {
       if (n.isParent()) { return; }
       const pos = n.position();
-      const w = n.width(), h = n.height();
+      // outerWidth/outerHeight = drawn box (style width + padding + border);
+      // n.width() alone is the inner size and exported nodes came out small
+      const w = n.outerWidth(), h = n.outerHeight();
       const cx = pos.x + ox, cyy = pos.y + oy;
       const idx = registerExportItem(n.data('_item'), n.data('label') || '', 'node');
       let g = `<g${idx >= 0 ? ` data-jb="${idx}"` : ''}>`;
       g += nodeShapeSvg(n.data('shape') || 'round-rectangle', cx, cyy, w, h, n.data('color') || ACCENT);
-      g += nodeLabelSvg(n.data('label'), cx, cyy);
+      // wrap to the inner width, mirroring cytoscape's text-max-width: data(w)
+      g += nodeLabelSvg(wrapText(n.data('label'), n.width(), '12px -apple-system, sans-serif').join('\n'), cx, cyy);
       g += '</g>';
       P.push(g);
     });
@@ -657,7 +663,7 @@
 
   // SVG-native types (sequence/class/swimlane/timeline): rebuild a fitted,
   // un-panned copy of the live SVG, with a background and its natural size.
-  function buildNativeSvg() {
+  function buildNativeSvg(noBg) {
     const live = stage.querySelector('svg');
     if (!live) { throw new Error('nothing to export yet'); }
     const W = Number(live.dataset.natw) || 800, H = Number(live.dataset.nath) || 600;
@@ -668,14 +674,14 @@
     clone.setAttribute('height', String(H));
     clone.setAttribute('viewBox', `0 0 ${W} ${H}`);
     clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-    clone.insertAdjacentHTML('afterbegin', `<rect x="0" y="0" width="${W}" height="${H}" fill="${escX(BG)}"/>`);
+    if (!noBg) { clone.insertAdjacentHTML('afterbegin', `<rect x="0" y="0" width="${W}" height="${H}" fill="${escX(BG)}"/>`); }
     const str = '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(clone);
     return { str, W, H };
   }
 
-  function buildExportSvg() {
+  function buildExportSvg(noBg) {
     if (!currentDiagram) { throw new Error('no diagram'); }
-    return currentDiagram.type === 'graph' ? buildGraphSvg() : buildNativeSvg();
+    return currentDiagram.type === 'graph' ? buildGraphSvg(noBg) : buildNativeSvg(noBg);
   }
 
   async function buildExportPng(scale) {
@@ -716,7 +722,7 @@
   }
 
   async function buildExportHtml(providedCss) {
-    const { str: svgStr } = buildExportSvg();
+    const { str: svgStr } = buildExportSvg(true); // page supplies the background
     const wanted = [];
     const allRefs = [];
     exportReg.forEach((entry, idx) => {
@@ -756,7 +762,9 @@
     const layout = 'body{margin:0;font-family:var(--vscode-font-family);background:var(--vscode-editor-background);color:var(--vscode-editor-foreground);}'
       + '#jbBar{padding:8px 14px;border-bottom:1px solid var(--vscode-panel-border);display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;}'
       + '#jbBar h1{font-size:14px;margin:0;font-weight:600;}#jbBar .sub{color:var(--vscode-descriptionForeground);font-size:12px;}'
-      + '#jbWrap{display:flex;height:calc(100vh - 42px);}#jbSvgBox{flex:1;overflow:auto;padding:16px;}#jbSvgBox svg{max-width:none;height:auto;}'
+      + '#jbBar .spacer{flex:1;}#jbReset{font:inherit;font-size:12px;padding:2px 10px;border:1px solid var(--vscode-panel-border);border-radius:4px;background:none;color:inherit;cursor:pointer;}'
+      + `#jbWrap{display:flex;height:calc(100vh - 42px);}#jbSvgBox{flex:1;overflow:hidden;background:${escX(BG)};}`
+      + '#jbSvgBox svg{display:block;width:100%;height:100%;user-select:none;}'
       + '#jbSvgBox [data-jb]{cursor:pointer;}#jbSvgBox [data-jb]:hover{filter:brightness(1.25);}'
       + '#jbPanel{width:380px;max-width:45vw;border-left:1px solid var(--vscode-panel-border);overflow:auto;padding:14px 16px;background:var(--vscode-editorWidget-background);}'
       + '#jbPanel[hidden]{display:none;}#jbPanel h2{font-size:15px;margin:.2em 0 .5em;}#jbClose{float:right;border:none;background:none;color:inherit;cursor:pointer;font-size:15px;}'
@@ -770,11 +778,31 @@
       + 'if(it.href)h+="<div><a href=\\""+esc(it.href)+"\\" target=\\"_blank\\" rel=\\"noopener\\">"+esc(it.href)+"</a></div>";'
       + 'if(it.refsHtml)h+=it.refsHtml;else h+="<div id=\\"jbHint\\">No code references.</div>";'
       + 'p.innerHTML=h;p.hidden=false;document.getElementById("jbClose").onclick=function(){p.hidden=true;};}'
-      + 'document.querySelectorAll("#jbSvgBox [data-jb]").forEach(function(el){var idx=el.getAttribute("data-jb");if(!ITEMS[idx])return;el.addEventListener("click",function(e){e.stopPropagation();showItem(idx);});});';
+      + 'document.querySelectorAll("#jbSvgBox [data-jb]").forEach(function(el){var idx=el.getAttribute("data-jb");if(!ITEMS[idx])return;'
+      + 'el.addEventListener("click",function(e){e.stopPropagation();showItem(idx);});'
+      // native hover tooltips from the element's jarbobo tooltip
+      + 'var it=ITEMS[idx];if(it&&it.tooltip){var t=document.createElementNS("http://www.w3.org/2000/svg","title");t.textContent=it.tooltip;el.appendChild(t);}});'
+      // pan/zoom viewport, mirroring the panel: scroll = pan, shift+scroll =
+      // horizontal pan, ctrl/cmd+scroll = zoom at cursor, drag empty space = pan
+      + '(function(){var box=document.getElementById("jbSvgBox");var svg=box.querySelector("svg");if(!svg)return;'
+      + 'var W=+svg.getAttribute("width")||800,H=+svg.getAttribute("height")||600;'
+      + 'var vp=document.createElementNS("http://www.w3.org/2000/svg","g");while(svg.firstChild){vp.appendChild(svg.firstChild);}svg.appendChild(vp);'
+      + 'svg.removeAttribute("viewBox");svg.setAttribute("width","100%");svg.setAttribute("height","100%");'
+      + 'var k=1,tx=0,ty=0;function apply(){vp.setAttribute("transform","translate("+tx+" "+ty+") scale("+k+")");}'
+      + 'function fit(){var r=box.getBoundingClientRect();k=Math.min(1,(r.width-32)/W,(r.height-32)/H);if(!(k>0))k=1;tx=(r.width-W*k)/2;ty=(r.height-H*k)/2;apply();}'
+      + 'box.addEventListener("wheel",function(e){e.preventDefault();'
+      + 'if(e.ctrlKey||e.metaKey){var f=Math.pow(1.0015,-e.deltaY);var nk=Math.min(8,Math.max(0.1,k*f));f=nk/k;var r=box.getBoundingClientRect();var px=e.clientX-r.left,py=e.clientY-r.top;tx=px-(px-tx)*f;ty=py-(py-ty)*f;k=nk;apply();}'
+      + 'else if(e.shiftKey){tx-=(e.deltaY||e.deltaX);apply();}else{tx-=e.deltaX;ty-=e.deltaY;apply();}},{passive:false});'
+      + 'var drag=null;box.addEventListener("mousedown",function(e){if(e.button===2||e.button===1||(e.button===0&&e.target===svg)){drag={x:e.clientX,y:e.clientY};e.preventDefault();}});'
+      + 'window.addEventListener("mousemove",function(e){if(!drag)return;tx+=e.clientX-drag.x;ty+=e.clientY-drag.y;drag={x:e.clientX,y:e.clientY};apply();});'
+      + 'window.addEventListener("mouseup",function(){drag=null;});'
+      + 'box.addEventListener("contextmenu",function(e){e.preventDefault();});'
+      + 'var rb=document.getElementById("jbReset");if(rb){rb.onclick=fit;}'
+      + 'window.addEventListener("resize",fit);fit();})();';
     return '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
       + `<title>${escX(d.title || 'Jarbobo diagram')}</title>`
       + `<style>${rootVars}${css}${layout}</style></head><body>`
-      + `<div id="jbBar"><h1>${escX(d.title || 'Diagram')}</h1><span class="sub">${escX(d.subtitle || '')}${d.subtitle ? ' · ' : ''}exported from Jarbobo — click an element for its code</span></div>`
+      + `<div id="jbBar"><h1>${escX(d.title || 'Diagram')}</h1><span class="sub">${escX(d.subtitle || '')}${d.subtitle ? ' · ' : ''}exported from Jarbobo — click an element for its code · scroll = pan · ctrl/cmd+scroll = zoom · drag = pan</span><span class="spacer"></span><button id="jbReset" title="Reset pan &amp; zoom">reset view</button></div>`
       + `<div id="jbWrap"><div id="jbSvgBox">${svgStr}</div><aside id="jbPanel" hidden></aside></div>`
       + `<script>${script}</script></body></html>`;
   }
@@ -957,6 +985,11 @@
       elements: els,
       layout,
       userZoomingEnabled: false, // zoom/pan handled by the shared stage controls
+      // Left-drag on empty space = rubber-band box select (pan stays on
+      // right-drag / scroll). With panning off, cytoscape box-selects without
+      // needing a modifier key; drag any selected node to move them together.
+      userPanningEnabled: false,
+      boxSelectionEnabled: true,
       style: [
         {
           selector: 'node',
@@ -1044,10 +1077,20 @@
           selector: 'edge.labelglow',
           style: { 'text-border-width': 2.5, 'text-background-opacity': 1 },
         },
+        // multi-select (left-drag box or shift+click): selected nodes glow
+        // steadily; dragging any one of them moves the whole selection
+        {
+          selector: 'node:selected',
+          style: { 'underlay-color': 'data(color)', 'underlay-padding': 6, 'underlay-opacity': 0.35, 'underlay-shape': 'round-rectangle', 'border-width': 2.5 },
+        },
       ],
     });
 
     window.__cy = cy; // debugging handle (harmless in production)
+
+    // selection is a node-arranging tool: group containers and edges stay out
+    cy.$(':parent').unselectify();
+    cy.edges().unselectify();
 
     cy.on('mousemove', 'node, edge', (ev) => {
       const oe = ev.originalEvent;
@@ -1061,8 +1104,16 @@
       holder.style.cursor = isInteractive(item) ? 'pointer' : 'default';
     });
     cy.on('tap', 'node, edge', (ev) => {
-      const item = ev.target.data('_item');
       const oe = ev.originalEvent || {};
+      // shift+click = add/remove this node from the multi-select (cytoscape
+      // toggles it natively); no detail panel for selection clicks
+      if (oe.shiftKey) { return; }
+      // Any other click is an interaction, not a selection: drop the tap's
+      // incidental select so ONLY shift+click and box-drag build selections
+      // (ctrl/cmd+click especially — it means "jump to code", and cytoscape
+      // treats that modifier as a selection toggle too).
+      if (ev.target.isNode()) { ev.target.unselect(); }
+      const item = ev.target.data('_item');
       interact(item, ev.target.data('label'), ev.target.isNode() ? 'node' : 'edge',
         { direct: !!(oe.metaKey || oe.ctrlKey) });
     });
