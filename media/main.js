@@ -1510,8 +1510,8 @@
             const f = frames[index];
             const prev = f.from ? ys[f.from - 1] + 10 : lifeTop + 8;
             const next = f.to + 1 < ys.length ? ys[f.to + 1] - 42 : Infinity;
-            const desired = Math.max(prev, Math.min(next, ys[f.from] - 34 + (before.y + dy - sequenceOffset('frame', index).y)));
-            dy = before.y + (desired - (ys[f.from] - 34));
+            const desired = Math.max(prev, Math.min(next, ys[f.from] - 46 + (before.y + dy - sequenceOffset('frame', index).y)));
+            dy = before.y + (desired - (ys[f.from] - 46));
           } else if (kind === 'note') {
             // Notes/tags are the one sequence annotation that may move freely.
             // Keep their horizontal and vertical offsets independent.
@@ -1520,8 +1520,12 @@
           el.setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
           if (kind === 'participant' && lifelineEls[index]) {
             lifelineEls[index].setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
+            // Activation bars belong to the message timeline: a participant's
+            // vertical move must not displace their Y positions.  They still
+            // follow horizontal lifeline movement so arrow starts remain
+            // anchored to the bar.
             activationEls[index].forEach((activation) => {
-              activation.setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
+              activation.setAttribute('transform', `translate(${dx - before.x} 0)`);
             });
             updateMessageGeometry(index, dx - before.x);
           }
@@ -1568,7 +1572,7 @@
       if (!isFinite(minC)) { return; }
       const x0 = minC - 40, x1 = maxC + 44 + (ms.slice(f.from, f.to + 1).some(m => m.from === m.to) ? 30 : 0);
       // Leave a clear title band above the first message label.
-      const y0 = ys[f.from] - 34, y1 = ys[f.to] + (ms[f.to].from === ms[f.to].to ? 34 : 14);
+      const y0 = ys[f.from] - 46, y1 = ys[f.to] + (ms[f.to].from === ms[f.to].to ? 34 : 14);
       const frameGroup = svgEl('g', {});
       frameGroup.appendChild(svgEl('rect', {
         x: x0, y: y0, width: x1 - x0, height: y1 - y0,
@@ -1601,13 +1605,11 @@
     });
     stacks.forEach((st, p) => st.forEach((y0) => actRects.push({ p, y0, y1: endY - 8 })));
     actRects.forEach((r) => {
-      // Activations are anchored to their participant, not to the original
-      // auto-layout coordinates.  A vertical lifeline move therefore carries
-      // the whole activation bar with it on the persisted redraw as well as
-      // during the live drag.
-      const participantDy = sequenceOffset('participant', ps[r.p].id).y;
       const activation = svgEl('rect', {
-        x: c[r.p] - 4, y: r.y0 + participantDy, width: 8, height: Math.max(6, r.y1 - r.y0),
+        // Y is owned by the message timeline; only the participant's X is
+        // applied here.  This keeps activation starts aligned with arrows
+        // when the lifeline header is moved vertically.
+        x: c[r.p] - 4, y: r.y0, width: 8, height: Math.max(6, r.y1 - r.y0),
         fill: ACCENT, 'fill-opacity': 0.35, stroke: ACCENT, 'stroke-width': 1,
       });
       activationEls[r.p].push(activation);
