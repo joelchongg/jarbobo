@@ -1436,6 +1436,7 @@
       d._layout = env;
       vscodeApi.postMessage({ type: 'layout', positions: env });
     };
+    const lifelineEls = [];
     const bindSequenceDrag = (el, key, kind, index) => {
       el.classList.add('sequence-draggable');
       el.addEventListener('mousedown', (down) => {
@@ -1460,25 +1461,35 @@
             const maxY = firstActivation - boxH - 8 - topY;
             dy = Math.max(-topY, Math.min(maxY, before.y + dy));
           } else if (kind === 'message') {
+            // Message arrows are horizontally anchored to the lifelines; only
+            // their vertical offset is user-adjustable.
+            dx = before.x;
             const current = ys[index];
             const prev = index ? ys[index - 1] + 24 : lifeTop + 12;
             const next = index + 1 < ys.length ? ys[index + 1] - 24 : Infinity;
             const desired = Math.max(prev, Math.min(next, current + dy));
             dy = before.y + (desired - current);
           } else if (kind === 'frame') {
+            dx = before.x;
             const f = frames[index];
             const prev = f.from ? ys[f.from - 1] + 10 : lifeTop + 8;
             const next = f.to + 1 < ys.length ? ys[f.to + 1] - 42 : Infinity;
             const desired = Math.max(prev, Math.min(next, ys[f.from] - 22 + (before.y + dy - sequenceOffset('frame', index).y)));
             dy = before.y + (desired - (ys[f.from] - 22));
+          } else if (kind === 'note') {
+            // Notes/tags are the one sequence annotation that may move freely.
+            // Keep their horizontal and vertical offsets independent.
           }
           savedSequencePositions[key] = { x: dx, y: dy };
           el.setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
+          if (kind === 'participant' && lifelineEls[index]) {
+            lifelineEls[index].setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
+          }
         };
         const up = () => {
           window.removeEventListener('mousemove', move, true);
           window.removeEventListener('mouseup', up, true);
-          if (moved) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 150); persistSequenceLayout(); renderSequence(d); }
+          if (moved) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 150); persistSequenceLayout(); render(d); }
         };
         window.addEventListener('mousemove', move, true);
         window.addEventListener('mouseup', up, true);
@@ -1488,10 +1499,12 @@
 
     // lifelines
     ps.forEach((p, i) => {
-      svg.appendChild(svgEl('line', {
+      const line = svgEl('line', {
         x1: c[i], y1: participantLifeTop[i], x2: c[i], y2: endY,
         stroke: MUTED, 'stroke-width': 1, 'stroke-dasharray': '4 4', 'stroke-opacity': 0.7,
-      }));
+      });
+      lifelineEls[i] = line;
+      svg.appendChild(line);
     });
 
     // frames (under messages)
