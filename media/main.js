@@ -1444,7 +1444,20 @@
     };
     const lifelineEls = [];
     const activationEls = ps.map(() => []);
+    const activationStarts = [];
+    const activationEnds = [];
     const messageGeometries = [];
+    const updateActivationForMessage = (messageIndex, y) => {
+      (activationStarts[messageIndex] || []).forEach((a) => {
+        a.y0 = y - 5;
+        a.rect.setAttribute('y', String(a.y0));
+        a.rect.setAttribute('height', String(Math.max(6, a.y1 - a.y0)));
+      });
+      (activationEnds[messageIndex] || []).forEach((a) => {
+        a.y1 = y + 5;
+        a.rect.setAttribute('height', String(Math.max(6, a.y1 - a.y0)));
+      });
+    };
     const updateMessageGeometry = (participantIndex, deltaX) => {
       messageGeometries.forEach((geom) => {
         if (!geom) { return; }
@@ -1518,6 +1531,9 @@
           }
           savedSequencePositions[key] = { x: dx, y: dy };
           el.setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
+          if (kind === 'message') {
+            updateActivationForMessage(index, ys[index] + (dy - before.y));
+          }
           if (kind === 'participant' && lifelineEls[index]) {
             lifelineEls[index].setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
             // Activation bars belong to the message timeline: a participant's
@@ -1600,10 +1616,13 @@
       const a = idx[m.from], b = idx[m.to];
       if (a === undefined || b === undefined) { return; }
       const kind = m.kind || (a === b ? 'self' : 'sync');
-      if (kind === 'sync' && a !== b) { stacks[b].push(ys[i] - 5); }
-      if (kind === 'reply' && stacks[a].length) { actRects.push({ p: a, y0: stacks[a].pop(), y1: ys[i] + 5 }); }
+      if (kind === 'sync' && a !== b) { stacks[b].push({ y0: ys[i] - 5, startMessage: i }); }
+      if (kind === 'reply' && stacks[a].length) {
+        const start = stacks[a].pop();
+        actRects.push({ p: a, y0: start.y0, y1: ys[i] + 5, startMessage: start.startMessage, endMessage: i });
+      }
     });
-    stacks.forEach((st, p) => st.forEach((y0) => actRects.push({ p, y0, y1: endY - 8 })));
+    stacks.forEach((st, p) => st.forEach((start) => actRects.push({ p, y0: start.y0, y1: endY - 8, startMessage: start.startMessage })));
     actRects.forEach((r) => {
       const activation = svgEl('rect', {
         // Y is owned by the message timeline; only the participant's X is
@@ -1613,6 +1632,9 @@
         fill: ACCENT, 'fill-opacity': 0.35, stroke: ACCENT, 'stroke-width': 1,
       });
       activationEls[r.p].push(activation);
+      const anchor = { rect: activation, y0: r.y0, y1: r.y1 };
+      if (r.startMessage !== undefined) { (activationStarts[r.startMessage] ||= []).push(anchor); }
+      if (r.endMessage !== undefined) { (activationEnds[r.endMessage] ||= []).push(anchor); }
       svg.appendChild(activation);
     });
 
