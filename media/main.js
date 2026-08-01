@@ -1405,9 +1405,12 @@
     // its neighbours; this pass also repairs hand-edited/legacy layouts.
     for (let i = 1; i < ys.length; i++) { ys[i] = Math.max(ys[i], ys[i - 1] + 24); }
     const firstActivation = ys.length ? Math.min(...ys) : lifeTop + 38;
-    // Lifeline headers have no vertical ceiling: they may be moved below the
-    // first message/activation as well as above it.
-    const participantTop = ps.map((p) => topY + sequenceOffset('participant', p.id).y);
+    // Lifeline headers may move upward freely, but cannot be placed below the
+    // first edge/activation in the sequence.
+    const participantTop = ps.map((p) => Math.min(
+      topY + sequenceOffset('participant', p.id).y,
+      firstActivation - boxH - 8,
+    ));
     const participantLifeTop = participantTop.map((v) => v + boxH);
     const endY = Math.max(y + 10, ...ys.map((v) => v + 60));
 
@@ -1448,6 +1451,7 @@
     const activationEnds = [];
     const messageGeometries = [];
     const noteElements = [];
+    const frameElements = [];
     const updateActivationForMessage = (messageIndex, y) => {
       (activationStarts[messageIndex] || []).forEach((a) => {
         a.y0 = y - 5;
@@ -1509,15 +1513,16 @@
             const minX = i ? c[i - 1] + pw[i - 1] / 2 + 20 + pw[i] / 2 - baseC[i] : -baseC[i] - pw[i] / 2 - 20;
             const maxX = i + 1 < c.length ? c[i + 1] - pw[i + 1] / 2 - 20 - pw[i] / 2 - baseC[i] : Infinity;
             dx = Math.max(minX, Math.min(maxX, before.x + dx));
-            // No vertical ceiling: the participant header can be translated
-            // freely while its lifeline and activations move with it.
-            dy = before.y + dy;
+            const maxY = firstActivation - boxH - 8 - topY;
+            dy = Math.min(maxY, before.y + dy);
           } else if (kind === 'message') {
             // Message arrows are horizontally anchored to the lifelines; only
             // their vertical offset is user-adjustable.
             dx = before.x;
             const current = ys[index];
-            const prev = index ? ys[index - 1] + 24 : lifeTop + 12;
+            // The first edge may rise almost to the participant headers; later
+            // edges retain the call-chain spacing constraint.
+            const prev = index ? ys[index - 1] + 24 : Math.min(...participantLifeTop) + 8;
             const next = index + 1 < ys.length ? ys[index + 1] - 24 : Infinity;
             const desired = Math.max(prev, Math.min(next, current + dy));
             dy = before.y + (desired - current);
@@ -1544,10 +1549,21 @@
           savedSequencePositions[key] = { x: dx, y: dy };
           el.setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
           if (kind === 'message') {
-            updateActivationForMessage(index, ys[index] + (dy - before.y));
+            const messageDelta = dy - before.y;
+            updateActivationForMessage(index, ys[index] + messageDelta);
+            frames.forEach((f, frameIndex) => {
+              if (index >= f.from && index <= f.to && frameElements[frameIndex]) {
+                frameElements[frameIndex].setAttribute('transform', `translate(0 ${messageDelta})`);
+              }
+            });
           }
           if (kind === 'participant' && lifelineEls[index]) {
-            lifelineEls[index].setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
+            const deltaX = dx - before.x;
+            const participantY = topY + dy + boxH;
+            lifelineEls[index].setAttribute('x1', String(c[index] + deltaX));
+            lifelineEls[index].setAttribute('x2', String(c[index] + deltaX));
+            lifelineEls[index].setAttribute('y1', String(participantY));
+            lifelineEls[index].setAttribute('y2', String(endY));
             // Activation bars belong to the message timeline: a participant's
             // vertical move must not displace their Y positions.  They still
             // follow horizontal lifeline movement so arrow starts remain
@@ -1602,6 +1618,7 @@
       // Leave a clear title band above the first message label.
       const y0 = ys[f.from] - 46, y1 = ys[f.to] + (ms[f.to].from === ms[f.to].to ? 34 : 14);
       const frameGroup = svgEl('g', {});
+      frameElements[frames.indexOf(f)] = frameGroup;
       frameGroup.appendChild(svgEl('rect', {
         x: x0, y: y0, width: x1 - x0, height: y1 - y0,
         fill: FG, 'fill-opacity': 0.03, stroke: MUTED, 'stroke-width': 1, rx: 2,
