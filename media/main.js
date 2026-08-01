@@ -1337,15 +1337,19 @@
     const w = tw(text, font);
     const anchor = opts.anchor || 'middle';
     const rx = anchor === 'middle' ? x - w / 2 : anchor === 'end' ? x - w : x;
-    svg.appendChild(svgEl('rect', {
+    const target = opts.parent || svg;
+    const rect = svgEl('rect', {
       x: rx - 3, y: y - 11, width: w + 6, height: 15,
       fill: BG, 'fill-opacity': 0.85, rx: 2,
-    }));
-    svg.appendChild(svgEl('text', {
+    });
+    const label = svgEl('text', {
       x, y, fill: opts.fill || FG, 'font-size': opts.size || 12,
       'font-weight': opts.bold ? 600 : 400, 'text-anchor': anchor,
       'font-family': "-apple-system, 'Segoe UI', sans-serif",
-    }, text));
+    }, text);
+    target.appendChild(rect);
+    target.appendChild(label);
+    return { rect, label, width: w, anchor };
   }
 
   // ================================================================ SEQUENCE
@@ -1440,6 +1444,34 @@
     };
     const lifelineEls = [];
     const activationEls = ps.map(() => []);
+    const messageGeometries = [];
+    const updateMessageGeometry = (participantIndex, deltaX) => {
+      messageGeometries.forEach((geom) => {
+        if (!geom) { return; }
+        const ca = c[geom.a] + (geom.a === participantIndex ? deltaX : 0);
+        const cb = c[geom.b] + (geom.b === participantIndex ? deltaX : 0);
+        if (geom.self) {
+          geom.arrow.setAttribute('d', `M${ca + 4} ${geom.y} h44 v22 h-40`);
+          const x = ca + 56;
+          geom.label.rect.setAttribute('x', String(x - 3));
+          geom.label.rect.setAttribute('y', String(geom.y + 15 - 11));
+          geom.label.label.setAttribute('x', String(x));
+          geom.label.label.setAttribute('y', String(geom.y + 15));
+          geom.hit.setAttribute('x', String(ca - 10));
+          return;
+        }
+        const end = cb + (cb > ca ? -5 : 5);
+        geom.arrow.setAttribute('x1', String(ca));
+        geom.arrow.setAttribute('x2', String(end));
+        const mid = (ca + cb) / 2;
+        geom.label.rect.setAttribute('x', String(mid - geom.label.width / 2 - 3));
+        geom.label.rect.setAttribute('y', String(geom.y - 6 - 11));
+        geom.label.label.setAttribute('x', String(mid));
+        geom.label.label.setAttribute('y', String(geom.y - 6));
+        geom.hit.setAttribute('x', String(Math.min(ca, cb) - 10));
+        geom.hit.setAttribute('width', String(Math.max(Math.abs(cb - ca), 60) + 20));
+      });
+    };
     const bindSequenceDrag = (el, key, kind, index) => {
       el.classList.add('sequence-draggable');
       el.addEventListener('mousedown', (down) => {
@@ -1491,6 +1523,7 @@
             activationEls[index].forEach((activation) => {
               activation.setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
             });
+            updateMessageGeometry(index, dx - before.x);
           }
         };
         const up = () => {
@@ -1629,24 +1662,28 @@
       const kind = m.kind || (a === b ? 'self' : 'sync');
       const yy = ys[i];
       const g = svgEl('g', {});
+      let arrow;
+      let messageLabel;
 
       if (kind === 'self' || a === b) {
         const x = c[a];
-        g.appendChild(svgEl('path', {
+        arrow = svgEl('path', {
           d: `M${x + 4} ${yy} h44 v22 h-40`,
           fill: 'none', stroke: FG, 'stroke-width': 1.4, 'marker-end': 'url(#jbFill)',
-        }));
-        labelWithBg(svg, x + 56, yy + 15, m.label, { anchor: 'start' });
+        });
+        g.appendChild(arrow);
+        messageLabel = labelWithBg(g, x + 56, yy + 15, m.label, { anchor: 'start', parent: g });
       } else {
         const dashed = kind === 'reply';
         const marker = kind === 'sync' ? 'url(#jbFill)' : 'url(#jbOpen)';
-        g.appendChild(svgEl('line', {
+        arrow = svgEl('line', {
           x1: c[a], y1: yy, x2: c[b] + (c[b] > c[a] ? -5 : 5), y2: yy,
           stroke: FG, 'stroke-width': 1.4,
           'stroke-dasharray': dashed ? '5 4' : undefined,
           'marker-end': marker,
-        }));
-        labelWithBg(svg, (c[a] + c[b]) / 2, yy - 6, m.label);
+        });
+        g.appendChild(arrow);
+        messageLabel = labelWithBg(g, (c[a] + c[b]) / 2, yy - 6, m.label, { parent: g });
       }
       // wide invisible hit area
       const hit = svgEl('rect', {
@@ -1655,6 +1692,7 @@
         fill: 'transparent',
       });
       g.appendChild(hit);
+      messageGeometries[i] = { a, b, y: yy, self: kind === 'self' || a === b, arrow, label: messageLabel, hit };
       bindSvgItem(g, m, m.label, 'message');
       bindSequenceDrag(g, sequenceKey('message', i), 'message', i);
       svg.appendChild(g);
