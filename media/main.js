@@ -1437,6 +1437,7 @@
       vscodeApi.postMessage({ type: 'layout', positions: env });
     };
     const lifelineEls = [];
+    const activationEls = ps.map(() => []);
     const bindSequenceDrag = (el, key, kind, index) => {
       el.classList.add('sequence-draggable');
       el.addEventListener('mousedown', (down) => {
@@ -1484,12 +1485,24 @@
           el.setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
           if (kind === 'participant' && lifelineEls[index]) {
             lifelineEls[index].setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
+            activationEls[index].forEach((activation) => {
+              activation.setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
+            });
           }
         };
         const up = () => {
           window.removeEventListener('mousemove', move, true);
           window.removeEventListener('mouseup', up, true);
-          if (moved) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 150); persistSequenceLayout(); render(d); }
+          if (moved) {
+            suppressClick = true;
+            setTimeout(() => { suppressClick = false; }, 150);
+            const viewportState = activeOps?.getState?.();
+            persistSequenceLayout();
+            render(d);
+            // Redrawing is necessary to keep every anchored arrow/frame in
+            // sync, but it must not reset the user's pan/zoom.
+            if (viewportState && activeOps?.setState) { activeOps.setState(viewportState); }
+          }
         };
         window.addEventListener('mousemove', move, true);
         window.addEventListener('mouseup', up, true);
@@ -1551,10 +1564,12 @@
     });
     stacks.forEach((st, p) => st.forEach((y0) => actRects.push({ p, y0, y1: endY - 8 })));
     actRects.forEach((r) => {
-      svg.appendChild(svgEl('rect', {
+      const activation = svgEl('rect', {
         x: c[r.p] - 4, y: r.y0, width: 8, height: Math.max(6, r.y1 - r.y0),
         fill: ACCENT, 'fill-opacity': 0.35, stroke: ACCENT, 'stroke-width': 1,
-      }));
+      });
+      activationEls[r.p].push(activation);
+      svg.appendChild(activation);
     });
 
     // participant headers
