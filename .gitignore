@@ -3,3 +3,5 @@ out/
 media/vendor/
 *.vsix
 .DS_Store
+dist-viewer/
+.playwright-mcp/

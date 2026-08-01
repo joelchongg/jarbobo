@@ -4,5 +4,9 @@ scripts/**
 media/dev.html
 assets/**
 *.vsix
+viewer/**
+dist-viewer/**
+.playwright-mcp/**
 tsconfig.json
 .gitignore
+.claude/**

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="../media/main.css">
+</head>
+<body>
+<script>
+window.__jarboboHostApi = {
+  postMessage(message) { parent.postMessage({ source: 'jarbobo-renderer', message }, location.origin); },
+  getState() { return null; }, setState() {}
+};
+</script>
+<div id="titlebar"><span id="title"></span><span id="subtitle"></span><span class="spacer"></span>
+  <select class="tbtn" id="verSel" hidden></select><button class="tbtn" id="btnTarget" hidden></button>
+  <button class="tbtn" id="btnResetView">reset view</button><button class="tbtn" id="btnResetLayout">reset layout</button><button class="tbtn" id="btnTranspose">transpose layout</button>
+</div>
+<div id="stage"></div><div id="tooltip"></div>
+<aside id="detail" hidden><button id="lockDetail"></button><button id="closeDetail">✕</button><div class="kind" id="detailKind"></div><h2 id="detailTitle"></h2><pre id="detailBody"></pre><div id="detailRefs"></div><div class="actions" id="detailActions"></div></aside>
+<script src="../media/vendor/highlight.min.js"></script><script src="../media/vendor/dagre.min.js"></script><script src="../media/vendor/cytoscape.min.js"></script><script src="../media/vendor/cytoscape-dagre.js"></script><script src="../media/main.js"></script>
+</body>
+</html>

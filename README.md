@@ -156,4 +156,20 @@ your editor          reveals the line, respecting locked editor groups
 `node scripts/test-mcp.mjs` smoke-tests the MCP server over stdio.
 `curl 127.0.0.1:$(jq .port ~/.jarbobo/port.json)/health` checks the bridge.
 
+## Public repository viewer
+
+`viewer/` is a static, client-only viewer for diagrams committed to public GitHub
+repositories. Serve the repository root with any static host, then open:
+
+```
+/viewer/?repo=https%3A%2F%2Fgithub.com%2FOWNER%2FREPOSITORY
+```
+
+It discovers `*.jarbobo` files through the GitHub API, renders them with the
+same browser renderer as the extension, and opens linked source in a side pane.
+No token, backend, MCP process, or model key is required for public repos.
+For portable links, new diagrams should use workspace-relative `path` values in
+references (for example `src/extension.ts`); the viewer also attempts to match
+legacy `file` references when their path suffix uniquely identifies a repo file.
+
 MIT.

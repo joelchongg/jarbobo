@@ -2,8 +2,13 @@
 (function () {
   'use strict';
 
+  // Hosts can provide a tiny VS Code-shaped bridge before this script loads.
+  // That lets the same renderer power the standalone web viewer without
+  // giving it access to a desktop extension host.
   const vscodeApi = typeof acquireVsCodeApi === 'function'
     ? acquireVsCodeApi()
+    : window.__jarboboHostApi
+    ? window.__jarboboHostApi
     : {
         postMessage: (m) => {
           console.log('[jarbobo dev] postMessage', m);
@@ -119,9 +124,13 @@
   // ranges highlighted in the editor on open and previewed in the panel.
   function getRefs(item) {
     if (!item) { return []; }
-    if (Array.isArray(item.refs) && item.refs.length) { return item.refs.filter((r) => r && r.file); }
+    if (Array.isArray(item.refs) && item.refs.length) {
+      return item.refs
+        .filter((r) => r && (r.path || r.file))
+        .map((r) => ({ ...r, file: r.path || r.file }));
+    }
     // legacy single-ref shorthand; _anchor is the server's text snapshot for drift recovery
-    return item.file ? [{ file: item.file, line: item.line, _anchor: item._anchor }] : [];
+    return item.path || item.file ? [{ file: item.path || item.file, path: item.path, line: item.line, _anchor: item._anchor }] : [];
   }
   function refLine(r) { return r.line || (r.ranges && r.ranges.length ? r.ranges[0].start : 0); }
   // compact location: ranges as "245-252,260-262" (single-line ranges collapse
@@ -1343,13 +1352,17 @@
     const ms = d.messages || [];
     const frames = (d.frames || []).slice();
     const idx = {};
+    const savedSequenceLayout = normalizeLayout(d._layout);
+    const savedSequencePositions = (savedSequenceLayout && savedSequenceLayout.nodes) || {};
+    const sequenceKey = (kind, id) => `sequence:${kind}:${id}`;
+    const sequenceOffset = (kind, id) => savedSequencePositions[sequenceKey(kind, id)] || { x: 0, y: 0 };
     ps.forEach((p, i) => { idx[p.id] = i; });
 
     // --- horizontal layout: participant centers
     const pw = ps.map((p) => Math.max(90, tw(p.label || p.id, UI_FONT_BOLD) + 30));
-    const c = [];
+    const baseC = [];
     for (let i = 0; i < ps.length; i++) {
-      if (i === 0) { c.push(24 + pw[0] / 2); continue; }
+      if (i === 0) { baseC.push(24 + pw[0] / 2); continue; }
       let gap = pw[i - 1] / 2 + 48 + pw[i] / 2;
       ms.forEach((m) => {
         const a = idx[m.from], b = idx[m.to];
@@ -1358,24 +1371,41 @@
           gap = Math.max(gap, tw(m.label, SMALL_FONT) + 70);
         }
       });
-      c.push(c[i - 1] + gap);
+      baseC.push(baseC[i - 1] + gap);
+    }
+    // Lifelines may slide horizontally, but their order is invariant.
+    const c = baseC.map((x, i) => x + sequenceOffset('participant', ps[i].id).x);
+    for (let i = 1; i < c.length; i++) {
+      c[i] = Math.max(c[i], c[i - 1] + pw[i - 1] / 2 + 20 + pw[i] / 2);
     }
 
     // --- vertical layout
     const topY = 18, boxH = 34, lifeTop = topY + boxH;
     let y = lifeTop + 38;
-    const ys = [];
+    const baseYs = [];
     ms.forEach((m, i) => {
       frames.forEach((f) => { if (f.from === i) { y += 24; } });
-      ys.push(y);
+      baseYs.push(y);
       const self = m.from === m.to || m.kind === 'self';
       y += self ? 58 : 40;
       if (m.note) { y += 8; }
       frames.forEach((f) => { if (f.to === i) { y += 12; } });
     });
-    const endY = y + 10;
+    const frameShift = (messageIndex) => frames.reduce((sum, f, frameIndex) =>
+      messageIndex >= f.from && messageIndex <= f.to ? sum + sequenceOffset('frame', frameIndex).y : sum, 0);
+    const ys = baseYs.map((value, i) => value + sequenceOffset('message', i).y + frameShift(i));
+    // Messages retain call-chain order. A dragged message is clamped between
+    // its neighbours; this pass also repairs hand-edited/legacy layouts.
+    for (let i = 1; i < ys.length; i++) { ys[i] = Math.max(ys[i], ys[i - 1] + 24); }
+    const firstActivation = ys.length ? Math.min(...ys) : lifeTop + 38;
+    const participantTop = ps.map((p, i) => Math.max(0, Math.min(
+      firstActivation - boxH - 8,
+      topY + sequenceOffset('participant', p.id).y,
+    )));
+    const participantLifeTop = participantTop.map((v) => v + boxH);
+    const endY = Math.max(y + 10, ...ys.map((v) => v + 60));
 
-    let width = c[c.length - 1] + pw[pw.length - 1] / 2 + 30;
+    let width = (c.length ? c[c.length - 1] + pw[pw.length - 1] / 2 + 30 : 160);
     const noteW = ms.reduce((w, m) => Math.max(w, m.note ? tw(m.note, SMALL_FONT) + 24 : 0), 0);
     if (noteW) { width += noteW + 20; }
     const height = endY + 26;
@@ -1396,10 +1426,70 @@
     mk('jbOpen', svgEl('path', { d: 'M0 0 L10 5 L0 10', fill: 'none', stroke: FG, 'stroke-width': 1.6 }));
     svg.appendChild(defs);
 
+    // Sequence elements use the same versioned layout envelope as graph and
+    // class diagrams, but with namespaced keys. Dragging changes offsets from
+    // the computed layout; a redraw then keeps lifelines, activations, arrows,
+    // frames and notes coherent.
+    const persistSequenceLayout = () => {
+      const previous = normalizeLayout(d._layout) || emptyLayout();
+      const env = { v: LAYOUT_V, nodes: { ...(previous.nodes || {}), ...savedSequencePositions }, edgeLabels: previous.edgeLabels || {} };
+      d._layout = env;
+      vscodeApi.postMessage({ type: 'layout', positions: env });
+    };
+    const bindSequenceDrag = (el, key, kind, index) => {
+      el.classList.add('sequence-draggable');
+      el.addEventListener('mousedown', (down) => {
+        if (down.button !== 0) { return; }
+        const startX = down.clientX, startY = down.clientY;
+        const before = { ...(savedSequencePositions[key] || { x: 0, y: 0 }) };
+        let moved = false;
+        const scale = () => {
+          const r = svg.getBoundingClientRect();
+          return { x: (Number(svg.getAttribute('width')) || r.width) / Math.max(1, r.width), y: (Number(svg.getAttribute('height')) || r.height) / Math.max(1, r.height) };
+        };
+        const move = (e) => {
+          const s = scale();
+          let dx = (e.clientX - startX) * s.x, dy = (e.clientY - startY) * s.y;
+          if (Math.abs(dx) < 3 && Math.abs(dy) < 3) { return; }
+          moved = true;
+          if (kind === 'participant') {
+            const i = index;
+            const minX = i ? c[i - 1] + pw[i - 1] / 2 + 20 + pw[i] / 2 - baseC[i] : -baseC[i] + pw[i] / 2 + 24;
+            const maxX = i + 1 < c.length ? c[i + 1] - pw[i + 1] / 2 - 20 - pw[i] / 2 - baseC[i] : Infinity;
+            dx = Math.max(minX, Math.min(maxX, before.x + dx));
+            const maxY = firstActivation - boxH - 8 - topY;
+            dy = Math.max(-topY, Math.min(maxY, before.y + dy));
+          } else if (kind === 'message') {
+            const current = ys[index];
+            const prev = index ? ys[index - 1] + 24 : lifeTop + 12;
+            const next = index + 1 < ys.length ? ys[index + 1] - 24 : Infinity;
+            const desired = Math.max(prev, Math.min(next, current + dy));
+            dy = before.y + (desired - current);
+          } else if (kind === 'frame') {
+            const f = frames[index];
+            const prev = f.from ? ys[f.from - 1] + 10 : lifeTop + 8;
+            const next = f.to + 1 < ys.length ? ys[f.to + 1] - 42 : Infinity;
+            const desired = Math.max(prev, Math.min(next, ys[f.from] - 22 + (before.y + dy - sequenceOffset('frame', index).y)));
+            dy = before.y + (desired - (ys[f.from] - 22));
+          }
+          savedSequencePositions[key] = { x: dx, y: dy };
+          el.setAttribute('transform', `translate(${dx - before.x} ${dy - before.y})`);
+        };
+        const up = () => {
+          window.removeEventListener('mousemove', move, true);
+          window.removeEventListener('mouseup', up, true);
+          if (moved) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 150); persistSequenceLayout(); renderSequence(d); }
+        };
+        window.addEventListener('mousemove', move, true);
+        window.addEventListener('mouseup', up, true);
+        down.preventDefault();
+      }, true);
+    };
+
     // lifelines
     ps.forEach((p, i) => {
       svg.appendChild(svgEl('line', {
-        x1: c[i], y1: lifeTop, x2: c[i], y2: endY,
+        x1: c[i], y1: participantLifeTop[i], x2: c[i], y2: endY,
         stroke: MUTED, 'stroke-width': 1, 'stroke-dasharray': '4 4', 'stroke-opacity': 0.7,
       }));
     });
@@ -1416,20 +1506,24 @@
       if (!isFinite(minC)) { return; }
       const x0 = minC - 40, x1 = maxC + 44 + (ms.slice(f.from, f.to + 1).some(m => m.from === m.to) ? 30 : 0);
       const y0 = ys[f.from] - 22, y1 = ys[f.to] + (ms[f.to].from === ms[f.to].to ? 34 : 14);
-      svg.appendChild(svgEl('rect', {
+      const frameGroup = svgEl('g', {});
+      frameGroup.appendChild(svgEl('rect', {
         x: x0, y: y0, width: x1 - x0, height: y1 - y0,
         fill: FG, 'fill-opacity': 0.03, stroke: MUTED, 'stroke-width': 1, rx: 2,
       }));
       const tag = f.kind + (f.label ? ' [' + f.label + ']' : '');
       const tagW = tw(tag, SMALL_FONT) + 14;
-      svg.appendChild(svgEl('path', {
+      frameGroup.appendChild(svgEl('path', {
         d: `M${x0} ${y0} h${tagW} v12 l-7 6 h${-(tagW - 7)} z`,
         fill: MUTED, 'fill-opacity': 0.25, stroke: MUTED, 'stroke-width': 0.8,
       }));
-      svg.appendChild(svgEl('text', {
+      frameGroup.appendChild(svgEl('text', {
         x: x0 + 6, y: y0 + 13, fill: FG, 'font-size': 11, 'font-weight': 600,
         'font-family': "-apple-system, sans-serif",
       }, tag));
+      const frameIndex = frames.indexOf(f);
+      bindSequenceDrag(frameGroup, sequenceKey('frame', frameIndex), 'frame', frameIndex);
+      svg.appendChild(frameGroup);
     });
 
     // activations: auto (sync starts on target, reply ends on sender) + flush at end
@@ -1455,38 +1549,39 @@
       const g = svgEl('g', {});
       const label = p.label || p.id;
       if (p.kind === 'actor') {
-        const hx = c[i], hy = topY + 7;
+        const hx = c[i], hy = participantTop[i] + 7;
         g.appendChild(svgEl('circle', { cx: hx, cy: hy, r: 4.5, fill: 'none', stroke: FG, 'stroke-width': 1.4 }));
         g.appendChild(svgEl('line', { x1: hx, y1: hy + 4.5, x2: hx, y2: hy + 14, stroke: FG, 'stroke-width': 1.4 }));
         g.appendChild(svgEl('line', { x1: hx - 7, y1: hy + 8, x2: hx + 7, y2: hy + 8, stroke: FG, 'stroke-width': 1.4 }));
         g.appendChild(svgEl('line', { x1: hx, y1: hy + 13, x2: hx - 5, y2: hy + 19, stroke: FG, 'stroke-width': 1.4 }));
         g.appendChild(svgEl('line', { x1: hx, y1: hy + 13, x2: hx + 5, y2: hy + 19, stroke: FG, 'stroke-width': 1.4 }));
         g.appendChild(svgEl('text', {
-          x: c[i], y: topY + 37, fill: FG, 'font-size': 11, 'font-weight': 600, 'text-anchor': 'middle',
+          x: c[i], y: participantTop[i] + 37, fill: FG, 'font-size': 11, 'font-weight': 600, 'text-anchor': 'middle',
           'font-family': "-apple-system, sans-serif",
         }, label));
       } else if (p.kind === 'database') {
         const w = pw[i] - 16, x0 = c[i] - w / 2, ry = 5;
         g.appendChild(svgEl('path', {
-          d: `M${x0} ${topY + ry} a${w / 2} ${ry} 0 0 1 ${w} 0 v${boxH - 2 * ry - 4} a${w / 2} ${ry} 0 0 1 ${-w} 0 z`,
+          d: `M${x0} ${participantTop[i] + ry} a${w / 2} ${ry} 0 0 1 ${w} 0 v${boxH - 2 * ry - 4} a${w / 2} ${ry} 0 0 1 ${-w} 0 z`,
           fill: BG, stroke: FG, 'stroke-width': 1.3,
         }));
-        g.appendChild(svgEl('ellipse', { cx: c[i], cy: topY + ry, rx: w / 2, ry, fill: 'none', stroke: FG, 'stroke-width': 1.3 }));
+        g.appendChild(svgEl('ellipse', { cx: c[i], cy: participantTop[i] + ry, rx: w / 2, ry, fill: 'none', stroke: FG, 'stroke-width': 1.3 }));
         g.appendChild(svgEl('text', {
-          x: c[i], y: topY + boxH / 2 + 7, fill: FG, 'font-size': 12, 'font-weight': 600, 'text-anchor': 'middle',
+          x: c[i], y: participantTop[i] + boxH / 2 + 7, fill: FG, 'font-size': 12, 'font-weight': 600, 'text-anchor': 'middle',
           'font-family': "-apple-system, sans-serif",
         }, label));
       } else {
         g.appendChild(svgEl('rect', {
-          x: c[i] - pw[i] / 2, y: topY, width: pw[i], height: boxH,
+          x: c[i] - pw[i] / 2, y: participantTop[i], width: pw[i], height: boxH,
           fill: ACCENT, 'fill-opacity': 0.15, stroke: ACCENT, 'stroke-width': 1.3, rx: 4,
         }));
         g.appendChild(svgEl('text', {
-          x: c[i], y: topY + boxH / 2 + 4.5, fill: FG, 'font-size': 13, 'font-weight': 600, 'text-anchor': 'middle',
+          x: c[i], y: participantTop[i] + boxH / 2 + 4.5, fill: FG, 'font-size': 13, 'font-weight': 600, 'text-anchor': 'middle',
           'font-family': "-apple-system, sans-serif",
         }, label));
       }
       bindSvgItem(g, p, label, 'participant');
+      bindSequenceDrag(g, sequenceKey('participant', p.id), 'participant', i);
       svg.appendChild(g);
     });
 
@@ -1524,20 +1619,24 @@
       });
       g.appendChild(hit);
       bindSvgItem(g, m, m.label, 'message');
+      bindSequenceDrag(g, sequenceKey('message', i), 'message', i);
       svg.appendChild(g);
 
       if (m.note) {
-        const nx = Math.max(c[a], c[b]) + 36;
+        const noteOffset = sequenceOffset('note', i);
+        const nx = Math.max(c[a], c[b]) + 36 + noteOffset.x;
+        const ny = yy + noteOffset.y;
         const nw = tw(m.note, SMALL_FONT) + 18;
         const ng = svgEl('g', {});
         ng.appendChild(svgEl('path', {
-          d: `M${nx} ${yy - 12} h${nw - 8} l8 8 v18 h${-nw} v-26 z M${nx + nw - 8} ${yy - 12} v8 h8`,
+          d: `M${nx} ${ny - 12} h${nw - 8} l8 8 v18 h${-nw} v-26 z M${nx + nw - 8} ${ny - 12} v8 h8`,
           fill: 'rgba(255, 214, 102, 0.10)', stroke: '#b8963e', 'stroke-width': 1,
         }));
         ng.appendChild(svgEl('text', {
-          x: nx + 8, y: yy + 5, fill: FG, 'font-size': 11.5,
+          x: nx + 8, y: ny + 5, fill: FG, 'font-size': 11.5,
           'font-family': "-apple-system, sans-serif",
         }, m.note));
+        bindSequenceDrag(ng, sequenceKey('note', i), 'note', i);
         svg.appendChild(ng);
       }
     });

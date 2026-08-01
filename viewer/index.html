@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Jarbobo Viewer</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header><a href="./" class="brand">jarbobo <span>viewer</span></a><form id="repo-form"><label class="sr-only" for="repo-url">GitHub repository URL</label><input id="repo-url" type="url" placeholder="https://github.com/owner/repository" required><button>Open repository</button></form></header>
+  <main>
+    <section id="welcome" class="welcome"><h1>Explore Jarbobo diagrams in any public GitHub repository.</h1><p>Paste a repository URL to find committed <code>.jarbobo</code> diagrams. Click diagram elements to inspect their linked source.</p></section>
+    <section id="app" hidden><aside id="sidebar"><div id="repo-name"></div><div id="status" role="status"></div><nav id="diagram-list" aria-label="Diagrams"></nav></aside><section id="viewer"><iframe id="diagram-frame" title="Jarbobo diagram"></iframe><aside id="source" hidden><div class="source-title"><span id="source-path"></span><button id="close-source" aria-label="Close source">×</button></div><pre id="source-code"></pre></aside></section></section>
+  </main>
+  <script src="app.js?v=2"></script>
+</body>
+</html>
