@@ -146,7 +146,7 @@ your editor          reveals the line, respecting locked editor groups
 | open a code ref directly (skip panel) | **⌘-click** the element |
 | highlight a code ref while hovering | hold **⌃ Ctrl** |
 | choose where refs open | **refs → code window / this window** toggle |
-| rearrange | drag nodes (graphs) or class boxes — layout persists |
+| rearrange | drag graph nodes/class boxes; sequence lifelines, messages, frames, and notes have constrained movement — layout persists |
 | switch diagram version | **v3 ▾** picker in the titlebar (edits bump the version; old ones stay) |
 | reopen anything | status bar item, or `Jarbobo: Open Recent Diagram` |
 
