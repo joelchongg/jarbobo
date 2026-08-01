@@ -1553,7 +1553,17 @@
             updateActivationForMessage(index, ys[index] + messageDelta);
             frames.forEach((f, frameIndex) => {
               if (index >= f.from && index <= f.to && frameElements[frameIndex]) {
-                frameElements[frameIndex].setAttribute('transform', `translate(0 ${messageDelta})`);
+                const frame = frameElements[frameIndex];
+                if (index === f.from || index === f.to) {
+                  const y0 = frame.y0 + (index === f.from ? messageDelta : 0);
+                  const y1 = frame.y1 + (index === f.to ? messageDelta : 0);
+                  frame.rect.setAttribute('y', String(y0));
+                  frame.rect.setAttribute('height', String(y1 - y0));
+                  frame.path.setAttribute('d', `M${frame.x0} ${y0} h${frame.tagW} v12 l-7 6 h${-(frame.tagW - 7)} z`);
+                  frame.text.setAttribute('y', String(y0 + 13));
+                } else {
+                  frame.group.setAttribute('transform', `translate(0 ${messageDelta})`);
+                }
               }
             });
           }
@@ -1618,22 +1628,25 @@
       // Leave a clear title band above the first message label.
       const y0 = ys[f.from] - 46, y1 = ys[f.to] + (ms[f.to].from === ms[f.to].to ? 34 : 14);
       const frameGroup = svgEl('g', {});
-      frameElements[frames.indexOf(f)] = frameGroup;
-      frameGroup.appendChild(svgEl('rect', {
+      const frameRect = svgEl('rect', {
         x: x0, y: y0, width: x1 - x0, height: y1 - y0,
         fill: FG, 'fill-opacity': 0.03, stroke: MUTED, 'stroke-width': 1, rx: 2,
-      }));
+      });
+      frameGroup.appendChild(frameRect);
       const tag = f.kind + (f.label ? ' [' + f.label + ']' : '');
       const tagW = tw(tag, SMALL_FONT) + 14;
-      frameGroup.appendChild(svgEl('path', {
+      const framePath = svgEl('path', {
         d: `M${x0} ${y0} h${tagW} v12 l-7 6 h${-(tagW - 7)} z`,
         fill: MUTED, 'fill-opacity': 0.25, stroke: MUTED, 'stroke-width': 0.8,
-      }));
-      frameGroup.appendChild(svgEl('text', {
+      });
+      frameGroup.appendChild(framePath);
+      const frameText = svgEl('text', {
         x: x0 + 6, y: y0 + 13, fill: FG, 'font-size': 11, 'font-weight': 600,
         'font-family': "-apple-system, sans-serif",
-      }, tag));
+      }, tag);
+      frameGroup.appendChild(frameText);
       const frameIndex = frames.indexOf(f);
+      frameElements[frameIndex] = { group: frameGroup, rect: frameRect, path: framePath, text: frameText, x0, x1, y0, y1, tagW };
       bindSequenceDrag(frameGroup, sequenceKey('frame', frameIndex), 'frame', frameIndex);
       svg.appendChild(frameGroup);
     });
