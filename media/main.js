@@ -1447,6 +1447,7 @@
     const activationStarts = [];
     const activationEnds = [];
     const messageGeometries = [];
+    const noteElements = [];
     const updateActivationForMessage = (messageIndex, y) => {
       (activationStarts[messageIndex] || []).forEach((a) => {
         a.y0 = y - 5;
@@ -1493,8 +1494,10 @@
         const before = { ...(savedSequencePositions[key] || { x: 0, y: 0 }) };
         let moved = false;
         const scale = () => {
-          const r = svg.getBoundingClientRect();
-          return { x: (Number(svg.getAttribute('width')) || r.width) / Math.max(1, r.width), y: (Number(svg.getAttribute('height')) || r.height) / Math.max(1, r.height) };
+          // Mouse deltas are screen pixels; SVG content coordinates are
+          // additionally magnified by the current viewport zoom.
+          const zoom = activeOps?.getZoom?.() || 1;
+          return { x: 1 / zoom, y: 1 / zoom };
         };
         const move = (e) => {
           const s = scale();
@@ -1525,6 +1528,15 @@
             const next = f.to + 1 < ys.length ? ys[f.to + 1] - 42 : Infinity;
             const desired = Math.max(prev, Math.min(next, ys[f.from] - 46 + (before.y + dy - sequenceOffset('frame', index).y)));
             dy = before.y + (desired - (ys[f.from] - 46));
+            const frameDelta = dy - before.y;
+            for (let mi = f.from; mi <= f.to; mi++) {
+              const geom = messageGeometries[mi];
+              if (geom) { geom.group.setAttribute('transform', `translate(0 ${frameDelta})`); }
+              if (noteElements[mi]) { noteElements[mi].setAttribute('transform', `translate(0 ${frameDelta})`); }
+              [...(activationStarts[mi] || []), ...(activationEnds[mi] || [])].forEach((a) => {
+                a.rect.setAttribute('transform', `translate(0 ${frameDelta})`);
+              });
+            }
           } else if (kind === 'note') {
             // Notes/tags are the one sequence annotation that may move freely.
             // Keep their horizontal and vertical offsets independent.
@@ -1716,7 +1728,7 @@
         fill: 'transparent',
       });
       g.appendChild(hit);
-      messageGeometries[i] = { a, b, y: yy, self: kind === 'self' || a === b, arrow, label: messageLabel, hit };
+      messageGeometries[i] = { a, b, y: yy, self: kind === 'self' || a === b, arrow, label: messageLabel, hit, group: g };
       bindSvgItem(g, m, m.label, 'message');
       bindSequenceDrag(g, sequenceKey('message', i), 'message', i);
       svg.appendChild(g);
@@ -1736,6 +1748,7 @@
           'font-family': "-apple-system, sans-serif",
         }, m.note));
         bindSequenceDrag(ng, sequenceKey('note', i), 'note', i);
+        noteElements[i] = ng;
         svg.appendChild(ng);
       }
     });
