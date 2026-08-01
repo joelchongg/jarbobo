@@ -901,10 +901,13 @@
     if (btnTranspose) { btnTranspose.hidden = !(d.type === 'graph' || d.type === 'class'); }
     activeOps = null;
     $('#title').textContent = d.title || '';
-    $('#subtitle').textContent = {
+    $('#title').title = d.title || '';
+    const diagramType = {
       graph: 'graph', sequence: 'sequence diagram', class: 'class diagram',
       swimlane: 'swimlane diagram', timeline: 'timeline',
     }[d.type] || d.type;
+    $('#subtitle').textContent = d._file ? String(d._file) : diagramType;
+    $('#subtitle').title = d._file ? String(d._file) : diagramType;
     stage.innerHTML = '';
     try {
       if (d.type === 'graph') { renderGraph(d); }
@@ -1398,10 +1401,9 @@
     // its neighbours; this pass also repairs hand-edited/legacy layouts.
     for (let i = 1; i < ys.length; i++) { ys[i] = Math.max(ys[i], ys[i - 1] + 24); }
     const firstActivation = ys.length ? Math.min(...ys) : lifeTop + 38;
-    const participantTop = ps.map((p, i) => Math.max(0, Math.min(
-      firstActivation - boxH - 8,
-      topY + sequenceOffset('participant', p.id).y,
-    )));
+    // Lifeline headers have no vertical ceiling: they may be moved below the
+    // first message/activation as well as above it.
+    const participantTop = ps.map((p) => topY + sequenceOffset('participant', p.id).y);
     const participantLifeTop = participantTop.map((v) => v + boxH);
     const endY = Math.max(y + 10, ...ys.map((v) => v + 60));
 
@@ -1456,11 +1458,12 @@
           moved = true;
           if (kind === 'participant') {
             const i = index;
-            const minX = i ? c[i - 1] + pw[i - 1] / 2 + 20 + pw[i] / 2 - baseC[i] : -baseC[i] + pw[i] / 2 + 24;
+            const minX = i ? c[i - 1] + pw[i - 1] / 2 + 20 + pw[i] / 2 - baseC[i] : -baseC[i] - pw[i] / 2 - 20;
             const maxX = i + 1 < c.length ? c[i + 1] - pw[i + 1] / 2 - 20 - pw[i] / 2 - baseC[i] : Infinity;
             dx = Math.max(minX, Math.min(maxX, before.x + dx));
-            const maxY = firstActivation - boxH - 8 - topY;
-            dy = Math.max(-topY, Math.min(maxY, before.y + dy));
+            // No vertical ceiling: the participant header can be translated
+            // freely while its lifeline and activations move with it.
+            dy = before.y + dy;
           } else if (kind === 'message') {
             // Message arrows are horizontally anchored to the lifelines; only
             // their vertical offset is user-adjustable.
@@ -1475,8 +1478,8 @@
             const f = frames[index];
             const prev = f.from ? ys[f.from - 1] + 10 : lifeTop + 8;
             const next = f.to + 1 < ys.length ? ys[f.to + 1] - 42 : Infinity;
-            const desired = Math.max(prev, Math.min(next, ys[f.from] - 22 + (before.y + dy - sequenceOffset('frame', index).y)));
-            dy = before.y + (desired - (ys[f.from] - 22));
+            const desired = Math.max(prev, Math.min(next, ys[f.from] - 34 + (before.y + dy - sequenceOffset('frame', index).y)));
+            dy = before.y + (desired - (ys[f.from] - 34));
           } else if (kind === 'note') {
             // Notes/tags are the one sequence annotation that may move freely.
             // Keep their horizontal and vertical offsets independent.
@@ -1531,7 +1534,8 @@
       }
       if (!isFinite(minC)) { return; }
       const x0 = minC - 40, x1 = maxC + 44 + (ms.slice(f.from, f.to + 1).some(m => m.from === m.to) ? 30 : 0);
-      const y0 = ys[f.from] - 22, y1 = ys[f.to] + (ms[f.to].from === ms[f.to].to ? 34 : 14);
+      // Leave a clear title band above the first message label.
+      const y0 = ys[f.from] - 34, y1 = ys[f.to] + (ms[f.to].from === ms[f.to].to ? 34 : 14);
       const frameGroup = svgEl('g', {});
       frameGroup.appendChild(svgEl('rect', {
         x: x0, y: y0, width: x1 - x0, height: y1 - y0,
@@ -1564,8 +1568,13 @@
     });
     stacks.forEach((st, p) => st.forEach((y0) => actRects.push({ p, y0, y1: endY - 8 })));
     actRects.forEach((r) => {
+      // Activations are anchored to their participant, not to the original
+      // auto-layout coordinates.  A vertical lifeline move therefore carries
+      // the whole activation bar with it on the persisted redraw as well as
+      // during the live drag.
+      const participantDy = sequenceOffset('participant', ps[r.p].id).y;
       const activation = svgEl('rect', {
-        x: c[r.p] - 4, y: r.y0, width: 8, height: Math.max(6, r.y1 - r.y0),
+        x: c[r.p] - 4, y: r.y0 + participantDy, width: 8, height: Math.max(6, r.y1 - r.y0),
         fill: ACCENT, 'fill-opacity': 0.35, stroke: ACCENT, 'stroke-width': 1,
       });
       activationEls[r.p].push(activation);

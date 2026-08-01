@@ -17,7 +17,7 @@ html, body {
   box-sizing: border-box;
 }
 #title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#subtitle { font-size: 10px; opacity: .55; text-transform: uppercase; letter-spacing: .08em; flex-shrink: 0; }
+#subtitle { font-size: 10px; opacity: .55; text-transform: uppercase; letter-spacing: .08em; flex: 0 1 46vw; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #titlebar .spacer { flex: 1; }
 .tbtn {
   background: transparent;

@@ -195,8 +195,9 @@ function bestViewColumn(): vscode.ViewColumn {
 }
 
 function createPanel(diagram: unknown, focus: boolean) {
-    const d = diagram as { title?: string } | undefined;
-    const title = d?.title ? String(d.title).slice(0, 48) : 'Jarbobo';
+    const d = diagram as { title?: string; _file?: string } | undefined;
+    const file = d?._file ? String(d._file) : undefined;
+    const title = file ? path.basename(file) : (d?.title ? String(d.title).slice(0, 48) : 'Jarbobo');
     const panel = vscode.window.createWebviewPanel(
         'jarbobo',
         title,
@@ -785,8 +786,8 @@ function historyEntries(): HistoryEntry[] {
                 const latest = c.versions[n - 1] as { title?: string; type?: string };
                 const mtime = fs.statSync(full).mtimeMs;
                 entries.push({
-                    label: latest.title || c.id || path.basename(full, JARBOBO_EXT),
-                    description: `${latest.type} · v${n}${n > 1 ? ` (${n} versions)` : ''} · ${path.relative(root, full)} · ${new Date(mtime).toLocaleString()}`,
+                    label: path.basename(full),
+                    description: `${path.relative(root, full)} · ${latest.type} · v${n}${n > 1 ? ` (${n} versions)` : ''} · ${new Date(mtime).toLocaleString()}`,
                     mtime,
                     load: () => containerPayload(full),
                 });
@@ -908,7 +909,8 @@ function openOrUpdatePanel(d: Record<string, unknown>, focus: boolean) {
         for (const [p, existing] of panels) {
             if ((existing as Record<string, unknown> | undefined)?._id === id) {
                 panels.set(p, d);
-                if (d.title) { p.title = String(d.title).slice(0, 48); }
+                const file = d._file ? String(d._file) : undefined;
+                p.title = file ? path.basename(file) : (d.title ? String(d.title).slice(0, 48) : 'Jarbobo');
                 p.webview.postMessage({ type: 'render', diagram: d });
                 if (focus) { p.reveal(undefined, false); }
                 log(`updated panel in place: id=${id} v${String(d._version)}`);
