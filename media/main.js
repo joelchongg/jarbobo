@@ -60,6 +60,7 @@
 
   let currentDiagram = null;   // for "reset layout" (full re-render)
   let openTarget = 'main';     // where code refs open: 'main' window vs 'here' (jarbobo's group)
+  let zoomSensitivity = 100;   // percent of the default zoom rate; set in the titlebar
   let lastClassPositions = null; // class-box centers from the latest renderClass, for transpose
 
   // ---------------------------------------------------------------- theme
@@ -362,6 +363,67 @@
   if (btnResetView) {
     btnResetView.addEventListener('click', () => { if (activeOps && activeOps.reset) { activeOps.reset(); } });
   }
+
+  // ---------------------------------------------------------------- titlebar dropdowns
+  // One-click actions and the zoom setting live in popovers so the titlebar
+  // stays readable. Toggles (refs target) and the version picker stay inline.
+
+  const openPopovers = [];
+  function wireMenu(buttonSel, popSel) {
+    const button = $(buttonSel), pop = $(popSel);
+    if (!button || !pop) { return null; }
+    openPopovers.push(pop);
+    button.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const wasHidden = pop.hidden;
+      openPopovers.forEach((p) => { p.hidden = true; });
+      pop.hidden = !wasHidden;
+    });
+    pop.addEventListener('click', (e) => e.stopPropagation());
+    return pop;
+  }
+  const actionsPop = wireMenu('#btnActions', '#actionsPop');
+  const zoomPop = wireMenu('#btnZoom', '#zoomPop');
+  document.addEventListener('click', () => { openPopovers.forEach((p) => { p.hidden = true; }); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { openPopovers.forEach((p) => { p.hidden = true; }); }
+  });
+  // Picking an action closes its menu.
+  if (actionsPop) {
+    actionsPop.querySelectorAll('.tmenu-item').forEach((item) => {
+      item.addEventListener('click', () => { actionsPop.hidden = true; });
+    });
+  }
+
+  // Zoom sensitivity: a percentage of the default rate, persisted per user.
+  const ZOOM_KEY = 'jarbobo.zoomSensitivity';
+  const ZOOM_DEFAULT = 100;
+  function readZoomSensitivity() {
+    try {
+      const stored = Number(localStorage.getItem(ZOOM_KEY));
+      if (Number.isFinite(stored) && stored >= 25 && stored <= 400) { return stored; }
+    } catch (_) { /* storage unavailable in some webview hosts */ }
+    return ZOOM_DEFAULT;
+  }
+  zoomSensitivity = readZoomSensitivity();
+  const zoomRange = $('#zoomRange'), zoomValue = $('#zoomValue'), zoomReset = $('#zoomReset');
+  function paintZoom() {
+    if (zoomRange) { zoomRange.value = String(zoomSensitivity); }
+    if (zoomValue) { zoomValue.textContent = `${zoomSensitivity}%`; }
+  }
+  function setZoomSensitivity(value) {
+    zoomSensitivity = Math.min(400, Math.max(25, Math.round(value)));
+    try { localStorage.setItem(ZOOM_KEY, String(zoomSensitivity)); } catch (_) { /* ignore */ }
+    paintZoom();
+  }
+  if (zoomRange) { zoomRange.addEventListener('input', () => setZoomSensitivity(Number(zoomRange.value))); }
+  if (zoomReset) {
+    zoomReset.addEventListener('click', () => {
+      setZoomSensitivity(ZOOM_DEFAULT);
+      if (zoomPop) { zoomPop.hidden = true; }
+    });
+  }
+  paintZoom();
   const verSel = $('#verSel');
   if (verSel) {
     verSel.addEventListener('change', () => {
@@ -473,7 +535,10 @@
     if (!activeOps) { return; }
     e.preventDefault();
     if (e.metaKey || e.ctrlKey) {
-      activeOps.zoom(Math.pow(1.0015, -e.deltaY), e.clientX, e.clientY);
+      // Sensitivity scales the exponent: 100% keeps the original 1.0015 rate,
+      // and a touchscreen pinch (which arrives here as ctrl+wheel) can be
+      // tuned to taste from the titlebar's zoom menu.
+      activeOps.zoom(Math.pow(1.0015, -e.deltaY * (zoomSensitivity / 100)), e.clientX, e.clientY);
     } else if (e.shiftKey) {
       activeOps.pan(-(e.deltaY || e.deltaX), 0);
     } else {

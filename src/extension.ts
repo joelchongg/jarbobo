@@ -697,10 +697,24 @@ function buildHtml(webview: vscode.Webview): string {
   <span class="spacer"></span>
   <select class="tbtn" id="verSel" title="Diagram version — edits create new versions; older ones stay selectable" hidden></select>
   <button class="tbtn" id="btnTarget" title="Where clicked code references open"></button>
-  <button class="tbtn" id="btnResetView" title="Reset pan &amp; zoom">reset view</button>
-  <button class="tbtn" id="btnResetLayout" title="Re-run the layout">reset layout</button>
-  <button class="tbtn" id="btnTranspose" title="Swap the x and y coordinates of every element">transpose layout</button>
-  <button class="tbtn" id="btnExport" title="Export this diagram (SVG, PNG, interactive HTML, Mermaid, draw.io, DOT, TikZ, JSON)">export</button>
+  <div class="tmenu" id="zoomMenu">
+    <button class="tbtn" id="btnZoom" title="How much a pinch or scroll zooms">zoom ▾</button>
+    <div class="tmenu-pop" id="zoomPop" hidden>
+      <label class="tmenu-label" for="zoomRange">Zoom sensitivity</label>
+      <input type="range" id="zoomRange" min="25" max="400" step="5">
+      <div class="tmenu-note"><span id="zoomValue"></span> · pinch and ⌘/ctrl-scroll</div>
+      <button class="tmenu-item" id="zoomReset">Reset to default</button>
+    </div>
+  </div>
+  <div class="tmenu" id="actionsMenu">
+    <button class="tbtn" id="btnActions" title="View, layout and export actions">actions ▾</button>
+    <div class="tmenu-pop" id="actionsPop" hidden>
+      <button class="tmenu-item" id="btnResetView" title="Reset pan &amp; zoom">reset view</button>
+      <button class="tmenu-item" id="btnResetLayout" title="Re-run the layout">reset layout</button>
+      <button class="tmenu-item" id="btnTranspose" title="Swap the x and y coordinates of every element">transpose layout</button>
+      <button class="tmenu-item" id="btnExport" title="Export this diagram (SVG, PNG, interactive HTML, Mermaid, draw.io, DOT, TikZ, JSON)">export</button>
+    </div>
+  </div>
 </div>
 <div id="stage"></div>
 <div id="tooltip"></div>

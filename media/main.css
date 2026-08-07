@@ -36,6 +36,45 @@ select.tbtn {
   background: var(--vscode-editor-background, #1e1e1e);
   color: inherit;
 }
+/* Titlebar dropdowns: one-click actions and the zoom setting. */
+.tmenu { position: relative; flex-shrink: 0; }
+.tmenu-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 168px;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: var(--vscode-editorHoverWidget-background, #252526);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 5px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
+}
+.tmenu-pop[hidden] { display: none; }
+.tmenu-item {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-size: 11px;
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tmenu-item:hover { background: rgba(128, 128, 128, .18); }
+.tmenu-label {
+  font-size: 10px;
+  opacity: .6;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 2px 8px 0;
+}
+.tmenu-note { font-size: 10px; opacity: .6; padding: 0 8px 3px; }
+#zoomRange { width: calc(100% - 16px); margin: 2px 8px; accent-color: var(--vscode-focusBorder, #007acc); }
 #stage { position: absolute; top: 34px; left: 0; right: 0; bottom: 0; overflow: hidden; }
 #cy { width: 100%; height: 100%; }
 #stage svg { display: block; margin: 0; }
