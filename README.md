@@ -83,6 +83,20 @@ for non-coding diagrams? Turn the check off:
 
 ## Quick start
 
+One script does the build, the editor install, the MCP registration (Claude Code, Cursor)
+and links the `codebase-onboarding` skill into `~/.claude/skills`:
+
+```bash
+git clone https://github.com/joelchongg/jarbobo.git && jarbobo/setup.sh
+# or, with no checkout yet (clones into ~/jarbobo):
+curl -fsSL https://raw.githubusercontent.com/joelchongg/jarbobo/main/setup.sh | bash
+
+jarbobo/setup.sh project ~/code/some-repo   # per codebase: keep *.jarbobo out of git status
+jarbobo/setup.sh check                      # what is installed, and where
+```
+
+The manual steps it automates:
+
 ```bash
 git clone git@github.com:tch1001/jarbobo.git && cd jarbobo
 npm install && npm run compile && npm run vendor

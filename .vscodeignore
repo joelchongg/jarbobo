@@ -10,3 +10,5 @@ dist-viewer/**
 tsconfig.json
 .gitignore
 .claude/**
+setup.sh
+*.jarbobo
