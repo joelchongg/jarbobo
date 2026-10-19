@@ -6,9 +6,8 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import {
     JARBOBO_EXT, walkDiagramFiles, readContainer, writeContainer, parseContainer,
-    serializeContainer, isContainerFile, stripMeta, collectRefFiles, type Container, type Note,
+    serializeContainer, isContainerFile, stripMeta, type Container, type Note,
 } from './storage.js';
-import { EXPORTERS, exportDiagram, suggestFilename, type Diagram, type ExportFormat } from './exporters.js';
 
 const HOME = path.join(os.homedir(), '.jarbobo');
 const PORT_FILE = path.join(HOME, 'port.json');
@@ -74,10 +73,6 @@ export function activate(context: vscode.ExtensionContext) {
             openOrUpdatePanel(latest as Record<string, unknown>, true);
         }),
         vscode.commands.registerCommand('jarbobo.openRecent', openRecent),
-        vscode.commands.registerCommand('jarbobo.export', async () => {
-            const target = await pickExportTarget();
-            if (target) { await exportDiagramFlow(target.panel, target.diagram); }
-        }),
         // Smart Cmd+Shift+T: the native "Reopen Closed Editor" cannot restore
         // webview tabs (extension-owned editors are excluded from the closed-
         // editor history). This dispatcher restores the jarbobo diagram when
@@ -618,122 +613,9 @@ async function onWebviewMessage(
         }
         const go = await vscode.window.showWarningMessage(`Open this link from the diagram?\n\n${uri.toString(true)}`, { modal: true }, 'Open');
         if (go === 'Open') { vscode.env.openExternal(uri); }
-    } else if (msg.type === 'export') {
-        const diagram = diagramForPanel(panel);
-        if (diagram) { void exportDiagramFlow(panel, diagram); }
-        else { vscode.window.showWarningMessage('Jarbobo: no diagram to export in this tab.'); }
-    } else if (msg.type === 'exportResult' && typeof msg.reqId === 'number') {
-        const resolve = exportPending.get(msg.reqId);
-        if (resolve) { exportPending.delete(msg.reqId); resolve(msg); }
     }
 }
 
-// ---------------------------------------------------------------- export
-
-type ExportResult = { ok?: boolean; data?: string; encoding?: string; error?: string };
-const exportPending = new Map<number, (r: ExportResult) => void>();
-let exportReqCounter = 0;
-// custom-editor panels aren't in the `panels` map; track their current diagram
-const customEditorDiagrams = new WeakMap<vscode.WebviewPanel, Record<string, unknown>>();
-
-function diagramForPanel(panel: vscode.WebviewPanel): Record<string, unknown> | undefined {
-    return (panels.get(panel) as Record<string, unknown> | undefined) ?? customEditorDiagrams.get(panel);
-}
-
-// Ask the webview to render a visual format (svg/png/html) from its live geometry.
-function requestVisualExport(panel: vscode.WebviewPanel, format: string): Promise<ExportResult> {
-    return new Promise((resolve) => {
-        const reqId = ++exportReqCounter;
-        exportPending.set(reqId, resolve);
-        // For interactive HTML we ship the panel's own CSS so the standalone file
-        // is styled even when the webview can't read its stylesheet (cross-origin).
-        let css: string | undefined;
-        if (format === 'html') {
-            try { css = fs.readFileSync(vscode.Uri.joinPath(extCtx.extensionUri, 'media', 'main.css').fsPath, 'utf8'); } catch { /* fall back to in-webview collection */ }
-        }
-        panel.webview.postMessage({ type: 'exportRender', format, reqId, css });
-        setTimeout(() => { if (exportPending.has(reqId)) { exportPending.delete(reqId); resolve({ ok: false, error: 'the panel did not respond' }); } }, 20000);
-    });
-}
-
-// The full export flow: pick a format, produce the bytes (text formats here from
-// the spec, visual formats in the webview), then write to a user-chosen file.
-async function exportDiagramFlow(panel: vscode.WebviewPanel, diagram: Record<string, unknown>): Promise<void> {
-    const pick = await vscode.window.showQuickPick(
-        EXPORTERS.map(e => ({ label: e.label, description: `.${e.ext}${e.kind === 'visual' ? '  (rendered)' : ''}`, fmt: e.id, ext: e.ext })),
-        { title: 'Export diagram as…', placeHolder: 'Choose an export format' },
-    );
-    if (!pick) { return; }
-    const info = EXPORTERS.find(e => e.id === pick.fmt)!;
-    // exports leave the machine: say what code goes with them
-    const refFiles = collectRefFiles(diagram);
-    if (refFiles.length && (pick.fmt === 'html' || pick.fmt === 'json')) {
-        const names = refFiles.slice(0, 6).map((f) => path.basename(f)).join(', ') + (refFiles.length > 6 ? `, +${refFiles.length - 6} more` : '');
-        const what = pick.fmt === 'html'
-            ? `This interactive HTML embeds the referenced code from ${refFiles.length} file(s): ${names}. Anyone you send it to can read that code.`
-            : `This JSON contains absolute file paths and copies of referenced code lines from ${refFiles.length} file(s): ${names}.`;
-        const go = await vscode.window.showWarningMessage(`${what}\n\nOnly share it where that code is allowed to go.`, { modal: true }, 'Export');
-        if (go !== 'Export') { return; }
-    }
-    let content: string | Buffer;
-    try {
-        if (info.kind === 'text') {
-            content = exportDiagram(diagram as Diagram, pick.fmt as ExportFormat).content;
-        } else {
-            const res = await requestVisualExport(panel, pick.fmt);
-            if (!res.ok || res.data == null) { vscode.window.showErrorMessage(`Jarbobo: export failed — ${res.error || 'no data'}`); return; }
-            content = res.encoding === 'base64' ? Buffer.from(res.data, 'base64') : res.data;
-        }
-    } catch (e) {
-        vscode.window.showErrorMessage(`Jarbobo: export failed — ${(e as Error).message}`);
-        return;
-    }
-    const target = await vscode.window.showSaveDialog({
-        defaultUri: defaultExportUri(diagram as Diagram, info.ext),
-        filters: { [info.label]: [info.ext] },
-        title: 'Export diagram',
-    });
-    if (!target) { return; }
-    try {
-        await vscode.workspace.fs.writeFile(target, typeof content === 'string' ? Buffer.from(content, 'utf8') : content);
-    } catch (e) {
-        vscode.window.showErrorMessage(`Jarbobo: could not write ${target.fsPath}: ${(e as Error).message}`);
-        return;
-    }
-    const open = 'Open';
-    const reveal = 'Reveal in Explorer';
-    const choice = await vscode.window.showInformationMessage(`Jarbobo: exported ${path.basename(target.fsPath)}`, open, reveal);
-    if (choice === open) { vscode.commands.executeCommand('vscode.open', target); }
-    else if (choice === reveal) { vscode.commands.executeCommand('revealFileInOS', target); }
-}
-
-// Suggest a filename in an "exports" folder beside the diagram's own storage
-// (matching the MCP tool's default location), or beside the workspace root
-// for a diagram that has no on-disk file yet (e.g. never delivered/saved).
-function defaultExportUri(diagram: Diagram, ext: string): vscode.Uri {
-    const name = suggestFilename(diagram, ext);
-    const file = (diagram as unknown as { _file?: string })._file;
-    const dir = file ? path.join(path.dirname(file), 'exports') : (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir());
-    return vscode.Uri.file(path.join(dir, name));
-}
-
-// Resolve which panel the export command should act on: the focused diagram tab,
-// else the only open one, else ask.
-async function pickExportTarget(): Promise<{ panel: vscode.WebviewPanel; diagram: Record<string, unknown> } | undefined> {
-    const all = [...panels.entries()].map(([panel, d]) => ({ panel, diagram: d as Record<string, unknown> }));
-    const active = all.find(x => x.panel.active);
-    if (active) { return active; }
-    if (all.length === 1) { return all[0]; }
-    if (all.length === 0) {
-        vscode.window.showInformationMessage('Jarbobo: open a diagram first, then export it.');
-        return undefined;
-    }
-    const pick = await vscode.window.showQuickPick(
-        all.map((x, i) => ({ label: String((x.diagram.title as string) || `Diagram ${i + 1}`), x })),
-        { title: 'Which diagram do you want to export?' },
-    );
-    return pick?.x;
-}
 
 // Stock VS Code (appName "Visual Studio Code" / "...- Insiders") delivers
 // mouse buttons 4/5 to workbench.action.navigateBack/Forward NATIVELY even
@@ -783,7 +665,6 @@ function buildHtml(webview: vscode.Webview): string {
       <button class="tmenu-item" id="btnResetView" title="Reset pan &amp; zoom">reset view</button>
       <button class="tmenu-item" id="btnResetLayout" title="Re-run the layout">reset layout</button>
       <button class="tmenu-item" id="btnTranspose" title="Swap the x and y coordinates of every element">transpose layout</button>
-      <button class="tmenu-item" id="btnExport" title="Export this diagram (SVG, PNG, interactive HTML, Mermaid, draw.io, DOT, TikZ, JSON)">export</button>
     </div>
   </div>
 </div>
@@ -947,7 +828,6 @@ class JarboboEditorProvider implements vscode.CustomTextEditorProvider {
             try {
                 const payload = containerPayloadFromText(document.getText(), file, version);
                 currentVersion = payload._version as number;
-                customEditorDiagrams.set(webviewPanel, payload); // so Export can find it
                 webviewPanel.webview.postMessage({ type: 'render', diagram: payload });
             } catch (e) {
                 log(`custom editor: cannot render ${file}: ${e}`);

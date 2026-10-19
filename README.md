@@ -49,7 +49,9 @@
 - Links from diagrams open only as `http`, `https` or `mailto`, after a confirmation.
 - The localhost bridge needs a per-session token from `~/.jarbobo/port.json` (readable only by
   you) and rejects anything a browser sends.
-- HTML and JSON exports warn before they carry code or file paths off the machine.
+- **Exports are removed entirely** — no export command, no titlebar item, no `export_diagram`
+  tool — so diagrams (and the code they show) can't be written out of the repo. The export
+  sections of the original README below don't apply to this fork.
 - `setup.sh install` adds `*.jarbobo` to your global git ignore: diagrams hold absolute paths,
   copies of code lines and your notes, and should never be committed by accident.
 - Diagram text returned to Claude is labelled as data, not instructions.

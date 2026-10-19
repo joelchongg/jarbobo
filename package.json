@@ -53,10 +53,6 @@
         "title": "Jarbobo: Open Recent Diagram"
       },
       {
-        "command": "jarbobo.export",
-        "title": "Jarbobo: Export Diagram\u2026"
-      },
-      {
         "command": "jarbobo.reopenClosed",
         "title": "Jarbobo: Reopen Closed Diagram"
       },
