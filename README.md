@@ -1,3 +1,56 @@
+# jarbobo (personal fork)
+
+> Forked from [tch1001/jarbobo](https://github.com/tch1001/jarbobo) and customized for my own use:
+> learning large, unfamiliar codebases with Claude Code. The original README follows below the line.
+
+## What this fork adds
+
+**Setup**
+
+- **`setup.sh`** — one command builds the extension, installs it into VS Code / Cursor, registers
+  the MCP server with Claude Code (and Cursor) and links the onboarding skill. `setup.sh project <dir>`
+  keeps `*.jarbobo` files out of a codebase's `git status`; `setup.sh check` shows what is installed.
+- **Codebase-onboarding skill** (`skills/codebase-onboarding/SKILL.md`) — the learning method:
+  domain first, the map, the repeated pattern, hot paths before depth, a component card per file.
+- **Readable file names** — new diagrams are named after what they show (`shred-leader-path.jarbobo`)
+  from a `fileName` Claude passes or the title, with `-2`, `-3` on a clash instead of random characters.
+
+**Diagrams that teach, not just map** (server instructions)
+
+- Tooltips lead with what an element is for; concept view before code; jargon explained; only
+  code that was actually read gets linked; follow-up diagrams suggested; sequence diagrams kept small.
+
+**Graph diagrams**
+
+- **Purpose lines** — a node's `purpose` shows as a smaller line under its name; a group's
+  `description` under its label. The **purpose** button hides them.
+- **Edge layers** — edges take a `kind`; a legend toggles each kind, and **+N** badges count a
+  node's hidden edges. One diagram serves as both overview and detailed view.
+- **Study paths** — named routes (`paths`) in a legend: pick one to dim the rest, number its
+  steps and walk them with **↑ / ↓**.
+- **Hot path tab** — a node's `hotPath` (the steps one message takes through that file) as a
+  side-panel tab; **↑ / ↓** step through it, opening each step's code beside the diagram.
+- **Search** — **⌘F / Ctrl+F** (or **/**): matches glow with their neighbours, the rest dims.
+
+**Sequence diagrams**
+
+- **Layout fixes** — nested frame labels no longer collide, activation bars end where the work
+  ends, notes sit in their own column, and dragging a message no longer squashes the rest.
+- **Step through** — click a message, then **↑ / ↓**: the rest dims and each step's code opens
+  beside the diagram without taking keyboard focus.
+- **Component card** — a diagram's `card` (purpose, the whole component as pseudocode, in/out,
+  what to skip, reading order, check questions) in a collapsible panel on the left.
+
+**Everywhere**
+
+- **Notes** — double-click an element to write your own note; ✎ marks it. Notes survive redraws
+  and Claude reads them when it opens or edits the diagram.
+- **Ask Claude** — right-click an element: explain this, walk me through its code, add a hot
+  path, is this right?, answer my note. The prompt is copied to paste into Claude Code.
+- A plain click always opens the side panel; **⌘ / Ctrl + click** jumps straight to the code.
+
+---
+
 # Tired of badly formatted markdown? Give your LLM a canvas. 🎨
 
 **jarbobo** lets Claude (or any MCP client) draw **real, interactive diagrams inside your editor** —
