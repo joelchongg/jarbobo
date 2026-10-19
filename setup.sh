@@ -22,6 +22,34 @@
 # Under VS Code Remote-SSH the extension and the MCP server run on the REMOTE
 # host: run this script there too, so the git ignore and MCP registration
 # exist where the diagrams are written.
+#
+# BEFORE THE FIRST RUN — install these once per machine, and it runs clean:
+#
+#   1. Node.js 22 or newer. npm comes with it; nothing to install separately.
+#        macOS:  brew install node        (or the installer from nodejs.org)
+#        Linux:  distro packages are often too old; use nvm
+#                (github.com/nvm-sh/nvm), then `nvm install 22`
+#        check:  node --version           → v22.x or later
+#   2. git.
+#        macOS:  xcode-select --install   (or brew install git)
+#        Linux:  sudo apt install git     (or dnf / yum)
+#   3. VS Code, with its `code` command on PATH. In VS Code: ⌘⇧P (Ctrl+Shift+P)
+#      → "Shell Command: Install 'code' command in PATH". On macOS the script
+#      also finds VS Code in /Applications without it. Over Remote-SSH, run
+#      the script from VS Code's integrated terminal on the remote, where
+#      `code` already exists and installs the extension on the remote.
+#   4. Claude Code, installed and logged in (`claude` on PATH), so the script
+#      can register jarbobo with it. Without it the build still succeeds and
+#      prints the command to run later.
+#   5. Network access to github.com (the clone) and registry.npmjs.org (npm ci).
+#
+# Not needed: Python, a C compiler, or Homebrew itself (only as one way to get
+# Node). No dependency builds native code. npm may warn that it skipped
+# @vscode/vsce-sign's install script: that's the Marketplace signing tool,
+# unused here, so the warning is harmless.
+#
+# Afterwards: reload the VS Code window and restart Claude Code.
+# On Windows, run it from Git Bash or WSL, not PowerShell.
 
 set -euo pipefail
 
@@ -38,7 +66,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --editor)  EDITOR_CHOICE="${2:?--editor needs code|cursor|all|none}"; shift ;;
-    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;  # the header comment
     install|project|check)
       [ -z "$CMD" ] || { echo "only one command at a time" >&2; exit 2; }
       CMD="$1" ;;
