@@ -530,6 +530,35 @@
     }
   }
 
+  // ---------------------------------------------------------------- purpose lines
+  // Graph nodes' `purpose` and groups' `description`, drawn as smaller muted
+  // text. A titlebar toggle hides them for readers who know the system.
+
+  const PURPOSE_FONT_PX = 10.5;
+  const PURPOSE_FONT = PURPOSE_FONT_PX + 'px -apple-system, sans-serif';
+  const PURPOSE_LINE = 13, PURPOSE_GAP = 3, PURPOSE_MAX_W = 170;
+  const GROUP_DESC_H = 2 * PURPOSE_LINE; // two lines are reserved; longer text is clamped
+  const GROUP_DESC_MIN_W = 260;
+  let purposeShown = true;
+  try { purposeShown = localStorage.getItem('jarbobo.purposeHidden') !== '1'; } catch { /* storage unavailable */ }
+  const btnPurpose = document.createElement('button');
+  btnPurpose.className = 'tbtn';
+  btnPurpose.id = 'btnPurpose';
+  btnPurpose.textContent = 'purpose';
+  btnPurpose.title = 'Show or hide the "what it is for" lines under node and group labels';
+  btnPurpose.hidden = true;
+  if ($('#btnTarget')) { $('#btnTarget').before(btnPurpose); }
+  btnPurpose.addEventListener('click', () => {
+    purposeShown = !purposeShown;
+    try { localStorage.setItem('jarbobo.purposeHidden', purposeShown ? '0' : '1'); } catch { /* storage unavailable */ }
+    if (currentDiagram) { render(currentDiagram); }
+  });
+  function updatePurposeBtn(d) {
+    const has = d.type === 'graph' && ((d.nodes || []).some((n) => n.purpose) || (d.groups || []).some((g) => g.description));
+    btnPurpose.hidden = !has;
+    btnPurpose.classList.toggle('on', purposeShown);
+  }
+
   // ---------------------------------------------------------------- titlebar buttons
 
   const btnTarget = $('#btnTarget');
@@ -890,7 +919,17 @@
     if (!cy) { throw new Error('graph not ready'); }
     exportReg = []; // the graph path doesn't use bindSvgItem — own the registry
     const PAD = 30;
-    const bb = cy.elements().boundingBox();
+    const bb = { ...cy.elements().boundingBox() };
+    // group labels and descriptions stand above their box: grow the bounds
+    // to hold them (the description is at least GROUP_DESC_MIN_W wide)
+    cy.nodes('[descr]').forEach((n) => {
+      const b = n.boundingBox({ includeLabels: false });
+      const w = Math.max(b.w, GROUP_DESC_MIN_W);
+      bb.y1 = Math.min(bb.y1, b.y1 - GROUP_DESC_H - 20);
+      bb.x1 = Math.min(bb.x1, b.x1 + (b.w - w) / 2);
+      bb.x2 = Math.max(bb.x2, b.x1 + (b.w + w) / 2);
+    });
+    bb.w = bb.x2 - bb.x1; bb.h = bb.y2 - bb.y1;
     const W = Math.max(1, Math.ceil(bb.w + PAD * 2));
     const H = Math.max(1, Math.ceil(bb.h + PAD * 2));
     const ox = PAD - bb.x1, oy = PAD - bb.y1;
@@ -899,10 +938,21 @@
     const P = noBg ? [] : [`<rect x="0" y="0" width="${W}" height="${H}" fill="${escX(BG)}"/>`];
     cy.nodes().forEach((n) => {
       if (!n.isParent()) { return; }
-      const b = n.boundingBox();
+      const b = n.boundingBox(n.data('descr') ? { includeLabels: false } : undefined);
       const color = n.data('color') || MUTED;
       P.push(`<rect x="${(b.x1 + ox).toFixed(1)}" y="${(b.y1 + oy).toFixed(1)}" width="${b.w.toFixed(1)}" height="${b.h.toFixed(1)}" rx="8" fill="${escX(color)}" fill-opacity="0.06" stroke="${escX(color)}" stroke-width="1" stroke-dasharray="4 3"/>`);
-      P.push(`<text x="${(b.x1 + ox + b.w / 2).toFixed(1)}" y="${(b.y1 + oy + 13).toFixed(1)}" text-anchor="middle" font-size="11" font-family="sans-serif" fill="${escX(FG)}">${escX(n.data('label'))}</text>`);
+      const descr = n.data('descr');
+      if (descr) {
+        // label above the box, then up to two lines of description
+        const lines = wrapText(descr, Math.max(GROUP_DESC_MIN_W, b.w), PURPOSE_FONT).slice(0, 2);
+        const top = b.y1 + oy - GROUP_DESC_H - 2;
+        P.push(`<text x="${(b.x1 + ox + b.w / 2).toFixed(1)}" y="${(top - 4).toFixed(1)}" text-anchor="middle" font-size="11" font-family="sans-serif" fill="${escX(FG)}">${escX(n.data('label'))}</text>`);
+        lines.forEach((ln, i) => {
+          P.push(`<text x="${(b.x1 + ox + b.w / 2).toFixed(1)}" y="${(top + 10 + i * PURPOSE_LINE).toFixed(1)}" text-anchor="middle" font-size="${PURPOSE_FONT_PX}" font-style="italic" font-family="sans-serif" fill="${escX(FG)}" fill-opacity="0.62">${escX(ln)}</text>`);
+        });
+      } else {
+        P.push(`<text x="${(b.x1 + ox + b.w / 2).toFixed(1)}" y="${(b.y1 + oy + 13).toFixed(1)}" text-anchor="middle" font-size="11" font-family="sans-serif" fill="${escX(FG)}">${escX(n.data('label'))}</text>`);
+      }
     });
     cy.edges().forEach((e) => {
       const s = e.source().position(), t = e.target().position();
@@ -934,7 +984,15 @@
       let g = `<g${idx >= 0 ? ` data-jb="${idx}"` : ''}>`;
       g += nodeShapeSvg(n.data('shape') || 'round-rectangle', cx, cyy, w, h, n.data('color') || ACCENT);
       // wrap to the inner width, mirroring cytoscape's text-max-width: data(w)
-      g += nodeLabelSvg(wrapText(n.data('label'), n.width(), '12px -apple-system, sans-serif').join('\n'), cx, cyy);
+      const purposeH = n.data('purposeH') || 0;
+      const labelCy = purposeH ? cyy - (purposeH + PURPOSE_GAP) / 2 : cyy;
+      g += nodeLabelSvg(wrapText(n.data('label'), n.width(), '12px -apple-system, sans-serif').join('\n'), cx, labelCy);
+      if (purposeH) {
+        const top = cyy + n.height() / 2 - purposeH;
+        (n.data('pLines') || []).forEach((ln, i) => {
+          g += `<text x="${cx.toFixed(1)}" y="${(top + 10 + i * PURPOSE_LINE).toFixed(1)}" text-anchor="middle" font-size="${PURPOSE_FONT_PX}" font-family="sans-serif" fill="${escX(FG)}" fill-opacity="0.62">${escX(ln)}</text>`;
+        });
+      }
       g += '</g>';
       P.push(g);
     });
@@ -1176,6 +1234,7 @@
     seqFocus = null;
     focusHint.hidden = true;
     renderCard(d);
+    updatePurposeBtn(d);
     $('#title').textContent = d.title || '';
     $('#title').title = d.title || '';
     const diagramType = {
@@ -1215,28 +1274,42 @@
     // is deprecated AND breaks edge rendering under the preset layout (edges
     // project before label-based sizes resolve → invisible edges on reopen).
     const GFONT = '12px -apple-system, sans-serif';
-    const nodeDims = (label) => {
+    // A node's purpose is a smaller, muted second block under its label; the
+    // node is sized for both and the label shifts up to make room.
+    const showPurpose = purposeShown;
+    const nodeDims = (label, purpose) => {
       let w = 0, rows = 0;
       String(label).split('\n').forEach((ln) => {
         const lw = tw(ln, GFONT);
         w = Math.max(w, Math.min(lw, 150));
         rows += Math.max(1, Math.ceil(lw / 150));
       });
-      return { w: Math.max(24, Math.ceil(w) + 6), h: Math.max(18, rows * 15 + 4) };
+      const labelH = Math.max(18, rows * 15 + 4);
+      if (!purpose) { return { w: Math.max(24, Math.ceil(w) + 6), h: labelH }; }
+      const pLines = wrapText(purpose, PURPOSE_MAX_W, PURPOSE_FONT);
+      pLines.forEach((ln) => { w = Math.max(w, tw(ln, PURPOSE_FONT)); });
+      const purposeH = pLines.length * PURPOSE_LINE;
+      return { w: Math.max(24, Math.ceil(w) + 6), h: labelH + PURPOSE_GAP + purposeH, purposeH, pLines };
     };
     const els = [];
     (d.groups || []).forEach((g) => els.push({
-      data: { id: g.id, label: g.label || g.id, isGroup: 1, color: g.color || MUTED },
+      data: {
+        id: g.id, label: g.label || g.id, isGroup: 1, color: g.color || MUTED,
+        // the description sits between the label and the box (two lines at most)
+        ...(showPurpose && g.description ? { descr: g.description, lmy: -4 - GROUP_DESC_H } : {}),
+      },
     }));
     (d.nodes || []).forEach((n) => {
       const label = n.label || n.id;
-      const dims = nodeDims(label);
+      const purpose = showPurpose ? n.purpose : undefined;
+      const dims = nodeDims(label, purpose);
       els.push({
         data: {
           id: n.id, label, parent: n.group || undefined,
           shape: shapeMap[n.shape] || 'round-rectangle',
           w: dims.w, h: dims.h,
           color: n.color || ACCENT, _item: n,
+          ...(purpose ? { purpose, pLines: dims.pLines, purposeH: dims.purposeH, lmy: -(dims.purposeH + PURPOSE_GAP) / 2 } : {}),
         },
       });
     });
@@ -1251,6 +1324,7 @@
     }));
 
     const layoutName = d.layout || 'layered';
+    const descRoom = showPurpose && (d.groups || []).some((g) => g.description) ? GROUP_DESC_H + 24 : 0;
     // A user-saved arrangement (drag & drop, possibly carried forward from a
     // previous version by an LLM edit) takes precedence over the computed
     // layout. It may be PARTIAL — new nodes added by an edit have no saved
@@ -1264,7 +1338,9 @@
     const layout = saved
       ? { name: 'preset', positions: (n) => saved[n.id()], fit: true, padding: 24 }
       : layoutName === 'layered'
-        ? { name: 'dagre', rankDir: d.direction || 'TB', nodeSep: 40, rankSep: 65, padding: 24 }
+        // group descriptions sit above their box, outside what dagre sizes,
+        // so leave room for them between neighbours
+        ? { name: 'dagre', rankDir: d.direction || 'TB', nodeSep: 40 + descRoom, rankSep: 65 + descRoom, padding: 24 }
         : layoutName === 'force' ? { name: 'cose', padding: 24, animate: false }
         : { name: layoutName, padding: 24 };
 
@@ -1302,6 +1378,7 @@
         // "bank tile (C)" don't spill past the box border (the global 150px cap
         // let text overrun narrow nodes).
         { selector: 'node[w]', style: { width: 'data(w)', height: 'data(h)', 'text-max-width': 'data(w)' } },
+        { selector: 'node[purpose]', style: { 'text-margin-y': 'data(lmy)' } },
         {
           selector: ':parent',
           style: {
@@ -1320,6 +1397,9 @@
             padding: 18,
           },
         },
+        { selector: ':parent[descr]', style: { 'text-margin-y': 'data(lmy)' } },
+        // group labels are short names; keep them on one line
+        { selector: ':parent', style: { 'text-max-width': 1000 } },
         {
           selector: 'edge',
           style: {
@@ -1525,6 +1605,60 @@
       window.addEventListener('mousemove', move, true);
       window.addEventListener('mouseup', up, true);
     }, true);
+
+    // ---- purpose lines and group descriptions ------------------------------
+    // Cytoscape draws a label in one style, so these live in an HTML layer
+    // over the canvas, re-placed on every render (pan, zoom, drag).
+    const overlay = document.createElement('div');
+    overlay.className = 'cyOverlay';
+    stage.appendChild(overlay);
+    const placed = [];
+    cy.nodes('[purpose]').forEach((n) => {
+      if (n.isParent()) { return; }
+      const el = document.createElement('div');
+      el.className = 'cyPurpose';
+      el.textContent = n.data('purpose');
+      overlay.appendChild(el);
+      placed.push({ n, el, group: false });
+    });
+    cy.nodes('[descr]').forEach((n) => {
+      const el = document.createElement('div');
+      el.className = 'cyDesc';
+      el.textContent = n.data('descr');
+      // the description is clamped to two lines; hovering shows all of it
+      el.addEventListener('mousemove', (e) => showItemTip({ tooltip: n.data('descr') }, e.clientX, e.clientY, false));
+      el.addEventListener('mouseleave', hideTip);
+      overlay.appendChild(el);
+      placed.push({ n, el, group: true });
+    });
+    let placePending = false;
+    const placeOverlay = () => {
+      placePending = false;
+      const z = cy.zoom();
+      placed.forEach(({ n, el, group }) => {
+        el.style.fontSize = (PURPOSE_FONT_PX * z) + 'px';
+        el.style.lineHeight = (PURPOSE_LINE * z) + 'px';
+        if (group) {
+          const bb = n.renderedBoundingBox({ includeLabels: false });
+          // at least GROUP_DESC_MIN_W wide, centred on the box, so a narrow
+          // group's description isn't squeezed into a column
+          const w = Math.max(bb.w, GROUP_DESC_MIN_W * z);
+          el.style.width = w + 'px';
+          el.style.transform = `translate(${bb.x1 + (bb.w - w) / 2}px, ${bb.y1 - (GROUP_DESC_H + 2) * z}px)`;
+        } else {
+          const p = n.renderedPosition();
+          const w = n.width() * z;
+          // the purpose block fills the bottom of the node's inner box
+          const top = p.y + (n.height() / 2 - n.data('purposeH')) * z;
+          el.style.width = w + 'px';
+          el.style.transform = `translate(${p.x - w / 2}px, ${top}px)`;
+        }
+      });
+    };
+    if (placed.length) {
+      cy.on('render', () => { if (!placePending) { placePending = true; requestAnimationFrame(placeOverlay); } });
+      cy.ready(placeOverlay);
+    }
 
     activeOps = {
       pan(dx, dy) { cy.panBy({ x: dx, y: dy }); },

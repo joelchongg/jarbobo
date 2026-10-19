@@ -192,10 +192,13 @@ to it.
 
 **Overview diagram** — one per system:
 
-- Group label = phase + job, e.g. `PHASE 3 · Only during our leader slots:
-  accept user transactions, check them, pick the best ones, run them,
-  broadcast our block`. Never just a topic word like "Ingress".
-- Node label = `name · purpose`, under ~30 characters.
+- Group `label` = phase + when it runs, e.g. `PHASE 3 · Only during our
+  leader slots`; group `description` = the job, e.g. `Accept user
+  transactions, check them, pick the best ones, run them, broadcast our
+  block.` Never just a topic word like "Ingress".
+- Node `label` = the name; node `purpose` = what it is for, under ~60
+  characters (`chooses which transactions go in the block`). The purpose
+  shows as a smaller line under the name, so don't repeat it in the label.
 - Highlight one or two study paths: give their nodes and edges a strong
   colour and number the edge labels `1 · …`, `2 · …`. Everything else stays
   default or dotted.

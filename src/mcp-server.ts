@@ -486,6 +486,7 @@ server.registerTool(
             'Pass `id` to EDIT an existing graph (next version, same tab); omit it to create a new one. ' +
             'Layouts: "layered" (default; hierarchical, follows `direction` TB or LR — best for flows and layers), "force" (organic clusters), "grid", "circle". ' +
             'Nodes support shapes (box, ellipse, diamond=decision, hexagon, cylinder=storage), hex colors, and grouping into labelled containers (`group` + top-level `groups`) — use groups for boundaries like "CPython interpreter" vs "your .so", processes, or layers. ' +
+            'Give nodes a `purpose` (a short "what it is for" line shown under the label) and groups a `description` (what happens inside and when) — they turn a wall of names into something a newcomer can read at a glance. ' +
             'Edges support labels, styles (solid, dashed, dotted), arrowheads (triangle, open, none) and colors — e.g. dashed+open for indirect/async relations, red for error paths. ' +
             'EVERY node and edge is interactive: `tooltip` (hover), `detail` (click → side panel), `file`+`line` (click → side panel shows the code; cmd/ctrl+click → opens source in the editor), `href` (click → opens URL). Use these aggressively: short labels on the diagram, explanation in tooltip/detail, and source locations (with their role explained) on anything that corresponds to code. ' +
             'Consider the semantic schemas from the server instructions (functional / state transition / shared state / pub-sub / resource lifecycle) — they define what node and edge refs should point at for common diagram intents; they are suggestions, not requirements.',
@@ -496,12 +497,14 @@ server.registerTool(
             direction: z.enum(['TB', 'LR']).optional().describe('Flow direction for "layered" (default TB).'),
             groups: z.array(z.object({
                 id: z.string(),
-                label: z.string().optional(),
+                label: z.string().optional().describe('Name the group by WHEN it runs and WHAT it does, not by topic.'),
+                description: z.string().optional().describe('One or two short sentences shown in smaller text under the label: what happens inside this group and when, e.g. "Only during our leader slots: accept user transactions, check them, pick the best ones, run them, broadcast our block." Keeps the label short while still saying what the group is for.'),
                 color: z.string().optional().describe('Hex tint for the container.'),
             })).optional().describe('Labelled container boxes. Assign nodes to a container via node.group.'),
             nodes: z.array(z.object({
                 id: z.string(),
                 label: z.string().optional().describe('Defaults to id. Keep short; put prose in tooltip/detail.'),
+                purpose: z.string().max(80).optional().describe('What this node is FOR, in plain words a newcomer understands (aim for under 60 characters), e.g. "chooses which transactions go in the block". Always visible as a smaller second line under the label, so a first look explains the diagram without hovering. Give one to every node whose name alone would mean nothing to a newcomer.'),
                 shape: z.enum(['box', 'ellipse', 'diamond', 'hexagon', 'cylinder']).optional().describe('Default box.'),
                 color: z.string().optional().describe('Hex accent color for this node.'),
                 group: z.string().optional().describe('id of a group this node sits inside.'),

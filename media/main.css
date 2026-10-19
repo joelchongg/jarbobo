@@ -130,6 +130,19 @@ svg text { user-select: none; }
 .clickable { cursor: pointer; }
 .draggable { cursor: grab; }
 
+/* ---- graph purpose lines and group descriptions (HTML over the canvas) ---- */
+.cyOverlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 5; }
+.cyPurpose, .cyDesc {
+  position: absolute; left: 0; top: 0; text-align: center;
+  color: var(--vscode-editor-foreground, #d4d4d4); opacity: .62;
+  font-family: -apple-system, 'Segoe UI', sans-serif;
+}
+.cyDesc {
+  pointer-events: auto; font-style: italic;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+#btnPurpose.on { background: rgba(86, 156, 214, .2); }
+
 /* ---- component card: collapsible summary panel on the left ---- */
 #card {
   position: absolute; top: 34px; left: 0; bottom: 0;
