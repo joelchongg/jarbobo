@@ -690,7 +690,8 @@
   // a click on empty canvas ends focus (element clicks stop propagation)
   stage.addEventListener('click', () => { if (seqFocus && !suppressClick) { seqFocus.clear(); } });
 
-  // Click policy: detail panel if there is detail text, else jump to file, else open url.
+  // Click policy: the side panel whenever there is an explanation or code to
+  // show (it renders each ref's code, and has "Go to source"), else open url.
   // cmd/ctrl+click (opts.direct) skips the panel and opens the code reference immediately.
   function interact(item, label, kind, opts) {
     if (!item || suppressClick) { return; }
@@ -702,9 +703,7 @@
       if (refs.length) { openRef(refs[0], refs); return; }
       if (item.href) { vscodeApi.postMessage({ type: 'openUrl', url: item.href }); return; }
     }
-    if (item.detail) { openDetail(item, label, kind); }
-    else if (refs.length > 1) { openDetail(item, label, kind); } // several refs → panel lists them all
-    else if (refs.length) { openRef(refs[0], refs); }
+    if (item.detail || refs.length) { openDetail(item, label, kind); }
     else if (item.href) { vscodeApi.postMessage({ type: 'openUrl', url: item.href }); }
     else if (item.tooltip) { openDetail(item, label, kind); }
   }
