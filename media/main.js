@@ -254,18 +254,60 @@
     });
   }
 
+  // A node's hot path: a second tab in the side panel listing the steps one
+  // message takes through it, in order. ↑/↓ (or j/k) step through them and
+  // open each step's code beside the diagram without taking focus.
+  const detailTabs = document.createElement('div');
+  detailTabs.id = 'detailTabs';
+  detailTabs.hidden = true;
+  $('#detailTitle').after(detailTabs);
+  const detailHot = document.createElement('div');
+  detailHot.id = 'detailHot';
+  detailHot.hidden = true;
+  $('#detailActions').after(detailHot);
+  let detailTab = 'overview'; // the reader's last tab, kept across elements
+  let hotState = null;        // { refs, rows, counter, index } while a hot path is open
+
+  function setDetailTab(tab) {
+    detailTab = tab;
+    const hot = tab === 'hot' && !!hotState;
+    ['#detailBody', '#detailRefs', '#detailActions'].forEach((sel) => { $(sel).hidden = hot; });
+    detailHot.hidden = !hot;
+    detailTabs.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.tab === (hot ? 'hot' : 'overview')));
+  }
+  function hotGo(j) {
+    if (!hotState || j < 0 || j >= hotState.refs.length) { return; }
+    hotState.index = j;
+    hotState.rows.forEach((row, k) => row.classList.toggle('current', k === j));
+    hotState.counter.textContent = `step ${j + 1} of ${hotState.refs.length}`;
+    hotState.rows[j].scrollIntoView({ block: 'nearest' });
+    openRef(hotState.refs[j], [hotState.refs[j]], { follow: true });
+  }
+  window.addEventListener('keydown', (e) => {
+    if (!hotState || detail.hidden || detailHot.hidden || e.metaKey || e.ctrlKey || e.altKey) { return; }
+    const tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') { return; }
+    const at = hotState.index;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'j') { e.preventDefault(); hotGo(at < 0 ? 0 : at + 1); }
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'k') { e.preventDefault(); hotGo(at < 0 ? 0 : at - 1); }
+  });
+
   function openDetail(item, label, kind) {
     detailOpenedAt = Date.now();
     $('#detailKind').textContent = kind || '';
     $('#detailTitle').textContent = label || '';
     $('#detailBody').textContent = item.detail || item.tooltip || '';
     const refs = getRefs(item);
+    const hot = (Array.isArray(item.hotPath) ? item.hotPath : []).filter((st) => st && st.file);
+    const hotRefs = hot.map((st, j) => ({
+      file: st.file, line: st.line, ranges: st.ranges, _anchor: st._anchor, label: 'step ' + (j + 1), note: st.text,
+    }));
     // ordered reference list, each with a clickable header + code preview
     // (the actual referenced lines, fetched from disk and syntax-highlighted)
     const refsBox = $('#detailRefs');
+    const reqId = ++snippetReq;
     if (refsBox) {
       refsBox.innerHTML = '';
-      const reqId = ++snippetReq;
       refs.forEach((r, i) => {
         const div = document.createElement('div');
         div.className = 'refItem';
@@ -298,7 +340,56 @@
         div.appendChild(pre);
         refsBox.appendChild(div);
       });
-      if (refs.length) { vscodeApi.postMessage({ type: 'snippets', reqId, refs }); }
+    }
+    // hot path steps share the snippet request; their ids follow the refs'
+    detailHot.innerHTML = '';
+    hotState = null;
+    if (hotRefs.length) {
+      const bar = document.createElement('div');
+      bar.className = 'hotBar';
+      const prev = Object.assign(document.createElement('button'), { textContent: '◀', title: 'Previous step (↑)' });
+      const next = Object.assign(document.createElement('button'), { textContent: '▶', title: 'Next step (↓)' });
+      const counter = Object.assign(document.createElement('span'), { className: 'hotCounter', textContent: `${hotRefs.length} steps` });
+      prev.onclick = () => hotGo(hotState.index <= 0 ? 0 : hotState.index - 1);
+      next.onclick = () => hotGo(hotState.index + 1);
+      bar.append(prev, counter, next, Object.assign(document.createElement('span'), { className: 'hotHint', textContent: '↑ ↓ step · each opens its code' }));
+      detailHot.appendChild(bar);
+      const rows = hotRefs.map((r, j) => {
+        const i = refs.length + j;
+        const row = document.createElement('div');
+        row.className = 'hotStep';
+        const head = document.createElement('div');
+        head.className = 'hotHead';
+        const base = r.file.split('/').pop() || r.file;
+        const loc = refLoc(r);
+        head.innerHTML = '<span class="hotNum">' + (j + 1) + '</span>'
+          + '<span class="hotText">' + escHtml(r.note) + '</span>'
+          + '<span class="refLoc" id="refloc-' + reqId + '-' + i + '">' + escHtml(base + (loc ? ':' + loc : '')) + '</span>';
+        head.title = 'Step ' + (j + 1) + ': open ' + refDisplay(r) + ' beside the diagram';
+        head.onclick = () => hotGo(j);
+        row.appendChild(head);
+        const pre = document.createElement('pre');
+        pre.className = 'refCode';
+        pre.id = 'snip-' + reqId + '-' + i;
+        pre.textContent = '…';
+        pre.onclick = () => { if (String(getSelection())) { return; } openRef(r, [r]); };
+        row.appendChild(pre);
+        detailHot.appendChild(row);
+        return row;
+      });
+      hotState = { refs: hotRefs, rows, counter, index: -1 };
+    }
+    const allRefs = refs.concat(hotRefs);
+    if (allRefs.length) { vscodeApi.postMessage({ type: 'snippets', reqId, refs: allRefs }); }
+    detailTabs.innerHTML = '';
+    detailTabs.hidden = !hotRefs.length;
+    if (hotRefs.length) {
+      [['overview', 'Overview'], ['hot', 'Hot path · ' + hotRefs.length]].forEach(([tab, text]) => {
+        const b = Object.assign(document.createElement('button'), { textContent: text });
+        b.dataset.tab = tab;
+        b.onclick = () => setDetailTab(tab);
+        detailTabs.appendChild(b);
+      });
     }
     const actions = $('#detailActions');
     actions.innerHTML = '';
@@ -316,9 +407,10 @@
       b.onclick = () => vscodeApi.postMessage({ type: 'openUrl', url: item.href });
       actions.appendChild(b);
     }
+    setDetailTab(hotRefs.length ? detailTab : 'overview');
     detail.hidden = false;
   }
-  function closeDetail() { detail.hidden = true; }
+  function closeDetail() { detail.hidden = true; hotState = null; }
   $('#closeDetail').addEventListener('click', closeDetail); // ✕ closes even when locked
 
   const lockBtn = $('#lockDetail');

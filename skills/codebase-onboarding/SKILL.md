@@ -221,9 +221,12 @@ to it.
   algorithm lives if it is in another file. Then the line that registers or
   creates the component.
 
-**Hot path** — attach to the component's node as ordered refs (or draw a
-sequence diagram for one component when the path crosses several files), each
-ref labelled `hop N: …` with a one-sentence note.
+**Hot path** — attach to the component's node as its `hotPath`: 3–8 steps in
+execution order, each a one-sentence `text` saying what is decided there and
+tight `ranges` on the lines that decide it. It shows as a "Hot path" tab the
+learner steps through with the arrow keys. Add it when they are about to read
+that node's code, after reading the functions yourself. When the path crosses
+several files or tiles, draw a sequence diagram instead.
 
 **Size limits.** Over ~30 nodes or ~40 edges, split by phase or area. A dense
 diagram reads as noise to a newcomer.

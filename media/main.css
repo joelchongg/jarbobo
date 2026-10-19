@@ -130,6 +130,36 @@ svg text { user-select: none; }
 .clickable { cursor: pointer; }
 .draggable { cursor: grab; }
 
+/* ---- side panel: Overview / Hot path tabs ---- */
+#detail [hidden] { display: none !important; } /* .actions sets display: flex */
+#detailTabs { display: flex; gap: 4px; margin: 0 0 10px; border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c); }
+#detailTabs[hidden] { display: none; }
+#detailTabs button {
+  background: transparent; border: 0; border-bottom: 2px solid transparent; color: inherit; opacity: .7;
+  padding: 4px 8px; font-size: 12px; cursor: pointer; margin-bottom: -1px;
+}
+#detailTabs button.on { opacity: 1; border-bottom-color: var(--vscode-textLink-foreground, #3794ff); }
+#detailHot[hidden] { display: none; }
+#detailHot .hotBar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 11px; }
+#detailHot .hotBar button {
+  background: transparent; border: 1px solid var(--vscode-panel-border, #3c3c3c); color: inherit;
+  border-radius: 3px; padding: 0 7px; cursor: pointer; font-size: 10px; line-height: 18px;
+}
+#detailHot .hotCounter { min-width: 70px; text-align: center; }
+#detailHot .hotHint { opacity: .55; margin-left: auto; }
+#detailHot .hotStep { margin-bottom: 8px; border-radius: 4px; border: 1px solid transparent; }
+#detailHot .hotStep.current { border-color: var(--vscode-textLink-foreground, #3794ff); background: rgba(86, 156, 214, .08); }
+#detailHot .hotHead { display: flex; gap: 7px; align-items: baseline; padding: 4px 6px; cursor: pointer; font-size: 12px; }
+#detailHot .hotHead:hover { background: rgba(128, 128, 128, .1); }
+#detailHot .hotNum {
+  flex: none; width: 16px; height: 16px; line-height: 16px; border-radius: 8px; text-align: center; font-size: 10px;
+  background: var(--vscode-badge-background, #4d4d4d); color: var(--vscode-badge-foreground, #fff);
+}
+#detailHot .hotStep.current .hotNum { background: var(--vscode-textLink-foreground, #3794ff); }
+#detailHot .hotText { flex: 1; }
+#detailHot .refLoc { flex: none; font-family: Menlo, Consolas, monospace; font-size: 10.5px; opacity: .7; }
+#detailHot .refCode { margin: 0 6px 6px; }
+
 /* ---- edge layers: legend toggles and "+N hidden" badges ---- */
 #edgeLegend {
   position: absolute; left: 10px; bottom: 10px; z-index: 40;

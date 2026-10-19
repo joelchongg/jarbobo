@@ -344,6 +344,15 @@ function attachAnchors(diagram: Record<string, unknown>) {
         const arr = diagram[key];
         if (Array.isArray(arr)) { arr.forEach((el) => visit(el as Record<string, unknown>)); }
     }
+    // hot path steps carry file+ranges directly, so anchor their ranges too
+    if (Array.isArray(diagram.nodes)) {
+        for (const n of diagram.nodes as Array<{ hotPath?: Array<Record<string, unknown>> }>) {
+            for (const step of n.hotPath ?? []) {
+                const a = anchorFor(step.file, step.line, step.ranges);
+                if (a) { step._anchor = a; }
+            }
+        }
+    }
     const card = diagram.card as Record<string, unknown> | undefined;
     if (card) {
         for (const key of ['io', 'blackBox', 'readingOrder', 'questions']) {
@@ -509,6 +518,15 @@ server.registerTool(
                 shape: z.enum(['box', 'ellipse', 'diamond', 'hexagon', 'cylinder']).optional().describe('Default box.'),
                 color: z.string().optional().describe('Hex accent color for this node.'),
                 group: z.string().optional().describe('id of a group this node sits inside.'),
+                hotPath: z.array(z.object({
+                    text: z.string().describe('One sentence: what is DECIDED or done at this step, e.g. "after_frag inserts the txn into the pending pool, ranked by fee per compute unit".'),
+                    file: z.string().describe('Absolute path to the source file.'),
+                    line: z.number().int().optional().describe('1-based line the cursor lands on. Defaults to the first line of the first range.'),
+                    ranges: z.array(z.object({
+                        start: z.number().int(),
+                        end: z.number().int().optional(),
+                    })).optional().describe('The lines that make this decision — TIGHT, a few lines, not the whole function.'),
+                })).optional().describe('HOT PATH for a node that is a module, file or tile: the path ONE message takes through it, in EXECUTION ORDER, 3-8 steps, only the lines that make decisions. Leave out init, metrics, sandboxing and error handling. Shown as a "Hot path" tab in the node\'s side panel that the reader steps through with the arrow keys, each step opening its code. Needs the functions read, not guessed from names: add it when the reader is about to read that node\'s code.'),
                 ...interactiveProps,
             })).min(1),
             edges: z.array(z.object({
