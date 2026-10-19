@@ -436,7 +436,7 @@ async function readSnippet(r: { file?: string; line?: number; ranges?: RefRange[
 
 async function onWebviewMessage(
     panel: vscode.WebviewPanel,
-    msg: { type: string; file?: string; line?: number; ranges?: RefRange[]; anchor?: RefAnchor; highlights?: RefHighlight[]; url?: string; target?: string; positions?: unknown; id?: string; version?: number; direction?: string; reqId?: number; refs?: Array<{ file?: string; line?: number; ranges?: RefRange[]; _anchor?: RefAnchor }>; format?: string; ok?: boolean; data?: string; encoding?: string; error?: string },
+    msg: { type: string; file?: string; line?: number; ranges?: RefRange[]; anchor?: RefAnchor; highlights?: RefHighlight[]; url?: string; target?: string; follow?: boolean; positions?: unknown; id?: string; version?: number; direction?: string; reqId?: number; refs?: Array<{ file?: string; line?: number; ranges?: RefRange[]; _anchor?: RefAnchor }>; format?: string; ok?: boolean; data?: string; encoding?: string; error?: string },
 ) {
     if (msg.type === 'ready') {
         const diagram = panels.get(panel);
@@ -482,9 +482,15 @@ async function onWebviewMessage(
         // panel.reveal cannot re-activate an aux-window panel
         // (field-verified: panel.active stayed false after reveal).
         // 'main' = explicitly take me to the code in the main window.
-        const viewColumn = msg.target === 'here'
-            ? (panel.viewColumn ?? vscode.ViewColumn.Beside)
-            : vscode.ViewColumn.One;
+        // follow = stepping through a sequence from the keyboard: show the
+        // code in another group and keep focus on the diagram so the next
+        // arrow key still reaches it. Never the diagram's own group, where
+        // the file would cover it.
+        const viewColumn = msg.follow
+            ? (panel.viewColumn === vscode.ViewColumn.One ? vscode.ViewColumn.Two : vscode.ViewColumn.One)
+            : msg.target === 'here'
+                ? (panel.viewColumn ?? vscode.ViewColumn.Beside)
+                : vscode.ViewColumn.One;
         log(`open ref: target=${msg.target} panel.viewColumn=${String(panel.viewColumn)} panel.active=${panel.active} -> viewColumn=${viewColumn}`);
         try {
             const doc = await vscode.workspace.openTextDocument(msg.file);
@@ -512,7 +518,7 @@ async function onWebviewMessage(
             // cursor position (the two-phase open used to record both).
             const editor = await vscode.window.showTextDocument(doc, {
                 viewColumn,
-                preserveFocus: false,
+                preserveFocus: !!msg.follow,
                 preview: true,
                 selection: target,
             });

@@ -130,6 +130,20 @@ svg text { user-select: none; }
 .clickable { cursor: pointer; }
 .draggable { cursor: grab; }
 
+/* ---- sequence focus: trace one message, dim the rest ---- */
+svg .jb-dim { transition: opacity .12s; }
+svg.jb-focusing .jb-dim { opacity: .16; }
+svg.jb-focusing .jb-dim.jb-lit { opacity: 1; }
+#focusHint {
+  position: fixed; left: 10px; bottom: 10px;
+  background: var(--vscode-editorHoverWidget-background, #252526);
+  border: 1px solid var(--vscode-editorHoverWidget-border, #454545);
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  padding: 3px 9px; border-radius: 4px; font-size: 11px;
+  pointer-events: none;
+}
+#focusHint[hidden] { display: none; }
+
 /* ---- detail panel: ordered code references with inline previews ---- */
 #detail { width: min(420px, 60vw); }
 #tooltip .moreRefs { opacity: .55; font-style: italic; }

@@ -147,13 +147,18 @@
   // list: every ref's ranges become the active highlight set — the editor
   // highlights each referenced file as the user visits it, persisting until
   // they return to a jarbobo tab. A ref without ranges highlights its line.
-  function openRef(r, all) {
+  // opts.follow: open beside the diagram WITHOUT taking focus, so keyboard
+  // stepping through a sequence keeps working while the code follows along.
+  function openRef(r, all, opts) {
     const hl = (all && all.length ? all : [r]).map((x) => ({
       file: x.file,
       ranges: x.ranges && x.ranges.length ? x.ranges : (x.line ? [{ start: x.line }] : []),
       anchor: x._anchor, // text snapshot: highlights re-anchor if the file drifted
     })).filter((x) => x.ranges.length);
-    vscodeApi.postMessage({ type: 'open', file: r.file, line: r.line, ranges: r.ranges, anchor: r._anchor, highlights: hl, target: openTarget });
+    vscodeApi.postMessage({
+      type: 'open', file: r.file, line: r.line, ranges: r.ranges, anchor: r._anchor, highlights: hl, target: openTarget,
+      follow: !!(opts && opts.follow),
+    });
   }
 
   let hoverRef = null; // {item, x, y} while a tooltip is visible — lets Ctrl re-style it live
@@ -483,6 +488,27 @@
 
   // Set briefly after a drag so the trailing click doesn't open the detail panel.
   let suppressClick = false;
+
+  // Sequence focus: the message being traced. renderSequence sets seqFocus
+  // ({ step(delta), clear() }); it is null for other diagram types. The
+  // focused index survives re-renders of the same diagram (e.g. after a drag).
+  let seqFocus = null;
+  let seqFocusState = { diagram: null, index: null };
+  const focusHint = document.createElement('div');
+  focusHint.id = 'focusHint';
+  focusHint.hidden = true;
+  document.body.appendChild(focusHint);
+
+  window.addEventListener('keydown', (e) => {
+    if (!seqFocus || e.metaKey || e.ctrlKey || e.altKey) { return; }
+    const tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') { return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'j') { e.preventDefault(); seqFocus.step(1); }
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'k') { e.preventDefault(); seqFocus.step(-1); }
+    else if (e.key === 'Escape') { seqFocus.clear(); }
+  });
+  // a click on empty canvas ends focus (element clicks stop propagation)
+  stage.addEventListener('click', () => { if (seqFocus && !suppressClick) { seqFocus.clear(); } });
 
   // Click policy: detail panel if there is detail text, else jump to file, else open url.
   // cmd/ctrl+click (opts.direct) skips the panel and opens the code reference immediately.
@@ -965,6 +991,8 @@
     // only graph/class have freely arrangeable coordinates to transpose
     if (btnTranspose) { btnTranspose.hidden = !(d.type === 'graph' || d.type === 'class'); }
     activeOps = null;
+    seqFocus = null;
+    focusHint.hidden = true;
     $('#title').textContent = d.title || '';
     $('#title').title = d.title || '';
     const diagramType = {
@@ -1555,7 +1583,10 @@
     const activationEnds = [];
     const messageGeometries = [];
     const noteElements = [];
+    const noteLeaders = [];
     const frameElements = [];
+    const headerEls = [];
+    const activationInfo = [];
     const updateActivationForMessage = (messageIndex, y) => {
       (activationStarts[messageIndex] || []).forEach((a) => {
         a.y0 = y - 5;
@@ -1712,6 +1743,7 @@
       const line = svgEl('line', {
         x1: c[i], y1: participantLifeTop[i], x2: c[i], y2: endY,
         stroke: MUTED, 'stroke-width': 1, 'stroke-dasharray': '4 4', 'stroke-opacity': 0.7,
+        class: 'jb-dim',
       });
       lifelineEls[i] = line;
       svg.appendChild(line);
@@ -1754,8 +1786,10 @@
         // when the lifeline header is moved vertically.
         x: c[r.p] - 4, y: r.y0, width: 8, height: Math.max(6, r.y1 - r.y0),
         fill: ACCENT, 'fill-opacity': 0.35, stroke: ACCENT, 'stroke-width': 1,
+        class: 'jb-dim',
       });
       activationEls[r.p].push(activation);
+      activationInfo.push({ el: activation, p: r.p, y0: r.y0, y1: r.y1 });
       const anchor = { rect: activation, y0: r.y0, y1: r.y1, endPad: r.endPad };
       if (r.startMessage !== undefined) { (activationStarts[r.startMessage] ||= []).push(anchor); }
       if (r.endMessage !== undefined) { (activationEnds[r.endMessage] ||= []).push(anchor); }
@@ -1779,7 +1813,7 @@
       // Leave a clear title band above the first message label.
       const y0 = frameTop(frameIndex);
       const y1 = ys[f.to] + (ms[f.to].from === ms[f.to].to ? 34 : 14) + 10 * frameEndRank[frameIndex];
-      const frameGroup = svgEl('g', {});
+      const frameGroup = svgEl('g', { class: 'jb-dim' });
       const frameRect = svgEl('rect', {
         x: x0, y: y0, width: x1 - x0, height: y1 - y0,
         fill: FG, 'fill-opacity': 0.03, stroke: MUTED, 'stroke-width': 1, rx: 2,
@@ -1804,7 +1838,8 @@
 
     // participant headers
     ps.forEach((p, i) => {
-      const g = svgEl('g', {});
+      const g = svgEl('g', { class: 'jb-dim' });
+      headerEls[i] = g;
       const label = p.label || p.id;
       if (p.kind === 'actor') {
         const hx = c[i], hy = participantTop[i] + 7;
@@ -1849,7 +1884,7 @@
       if (a === undefined || b === undefined) { return; }
       const kind = m.kind || (a === b ? 'self' : 'sync');
       const yy = ys[i];
-      const g = svgEl('g', {});
+      const g = svgEl('g', { class: 'jb-dim' });
       let arrow;
       let messageLabel;
 
@@ -1882,6 +1917,7 @@
       g.appendChild(hit);
       messageGeometries[i] = { a, b, y: yy, self: kind === 'self' || a === b, arrow, label: messageLabel, hit, group: g };
       bindSvgItem(g, m, m.label, 'message');
+      g.addEventListener('click', () => { if (!suppressClick) { focusMessage(i, {}); } });
       bindSequenceDrag(g, sequenceKey('message', i), 'message', i);
       svg.appendChild(g);
 
@@ -1893,11 +1929,13 @@
         const nw = nb.w;
         // dotted leader from the message's right end to the note
         const fromX = kind === 'self' || a === b ? c[a] + 48 : Math.max(c[a], c[b]);
-        svg.appendChild(svgEl('path', {
+        noteLeaders[i] = svgEl('path', {
           d: `M${fromX + 6} ${yy} H${nx - 10} L${nx} ${top + nb.h / 2}`,
           fill: 'none', stroke: '#b8963e', 'stroke-width': 1, 'stroke-dasharray': '2 3', 'stroke-opacity': 0.7,
-        }));
-        const ng = svgEl('g', {});
+          class: 'jb-dim',
+        });
+        svg.appendChild(noteLeaders[i]);
+        const ng = svgEl('g', { class: 'jb-dim' });
         ng.appendChild(svgEl('path', {
           d: `M${nx} ${top} h${nw - 8} l8 8 v${nb.h - 8} h${-nw} z M${nx + nw - 8} ${top} v8 h8`,
           fill: 'rgba(255, 214, 102, 0.10)', stroke: '#b8963e', 'stroke-width': 1,
@@ -1916,6 +1954,69 @@
 
     stage.appendChild(svg);
     activeOps = makeSvgViewport(svg);
+
+    // --- focus: trace one message at a time
+    // The focused message, its two participants, its enclosing frames, its
+    // note and the activation bars it touches stay lit; the rest dims. A
+    // band behind the message marks the current step.
+    const band = svgEl('rect', { fill: ACCENT, 'fill-opacity': 0.14, rx: 4, 'pointer-events': 'none' });
+    const keepInView = (i) => {
+      const geom = messageGeometries[i];
+      if (!activeOps || !activeOps.getState || !geom) { return; }
+      const st = activeOps.getState();
+      const midX = geom.self ? c[geom.a] + 60 : (c[geom.a] + c[geom.b]) / 2;
+      const sx = st.tx + midX * st.k, sy = st.ty + geom.y * st.k;
+      const visibleW = stage.clientWidth - (detail.hidden ? 0 : detail.offsetWidth);
+      let { tx, ty } = st;
+      if (sy < 70 || sy > stage.clientHeight - 70) { ty = stage.clientHeight * 0.35 - geom.y * st.k; }
+      if (sx < 40 || sx > visibleW - 40) { tx = visibleW * 0.45 - midX * st.k; }
+      if (tx !== st.tx || ty !== st.ty) { activeOps.setState({ tx, ty, k: st.k }); }
+    };
+    const focusMessage = (i, opts) => {
+      const geom = messageGeometries[i];
+      if (!geom) { return; }
+      seqFocusState.index = i;
+      svg.classList.add('jb-focusing');
+      const lit = new Set([geom.group, headerEls[geom.a], headerEls[geom.b], lifelineEls[geom.a], lifelineEls[geom.b],
+        noteElements[i], noteLeaders[i]]);
+      frames.forEach((f, fi) => { if (frameElements[fi] && i >= f.from && i <= f.to) { lit.add(frameElements[fi].group); } });
+      activationInfo.forEach((ai) => {
+        if ((ai.p === geom.a || ai.p === geom.b) && ai.y0 <= ys[i] + 6 && ai.y1 >= ys[i] - 6) { lit.add(ai.el); }
+      });
+      svg.querySelectorAll('.jb-dim').forEach((el) => el.classList.toggle('jb-lit', lit.has(el)));
+      const x0 = Math.min(c[geom.a], c[geom.b]) - 14;
+      const x1 = geom.self ? c[geom.a] + 56 + geom.label.width + 10 : Math.max(c[geom.a], c[geom.b]) + 14;
+      band.setAttribute('x', String(x0));
+      band.setAttribute('y', String(geom.y - 21));
+      band.setAttribute('width', String(x1 - x0));
+      band.setAttribute('height', String(geom.self ? 52 : 30));
+      geom.group.insertBefore(band, geom.group.firstChild);
+      focusHint.textContent = `step ${i + 1} of ${ms.length} · ↑ ↓ to step · Esc to exit`;
+      focusHint.hidden = false;
+      if (opts.step) {
+        const m = ms[i];
+        openDetail(m, m.label, 'message');
+        const refs = getRefs(m);
+        if (refs.length) { openRef(refs[0], refs, { follow: true }); }
+        keepInView(i);
+      }
+    };
+    const clearFocus = () => {
+      seqFocusState.index = null;
+      svg.classList.remove('jb-focusing');
+      band.remove();
+      focusHint.hidden = true;
+    };
+    seqFocus = {
+      step(delta) {
+        let i = seqFocusState.index === null ? (delta > 0 ? -1 : ms.length) : seqFocusState.index;
+        do { i += delta; } while (i >= 0 && i < ms.length && !messageGeometries[i]);
+        if (i >= 0 && i < ms.length) { focusMessage(i, { step: true }); }
+      },
+      clear: clearFocus,
+    };
+    if (seqFocusState.diagram === d && seqFocusState.index !== null) { focusMessage(seqFocusState.index, {}); }
+    else { seqFocusState = { diagram: d, index: null }; }
   }
 
   // ================================================================ CLASS

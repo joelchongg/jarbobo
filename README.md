@@ -159,6 +159,7 @@ your editor          reveals the line, respecting locked editor groups
 | pin the detail panel | 🔓 → 🔒 next to ✕ (click outside closes it when unlocked) |
 | open a code ref directly (skip panel) | **⌘-click** the element |
 | highlight a code ref while hovering | hold **⌃ Ctrl** |
+| trace a sequence step by step | click a message, then **↑ / ↓** (or j / k): the rest dims, the side panel shows the step and its code opens beside the diagram, highlighted · **Esc** exits |
 | choose where refs open | **refs → code window / this window** toggle |
 | rearrange | drag graph nodes/class boxes; sequence lifelines, messages, frames, and notes have constrained movement — layout persists |
 | switch diagram version | **v3 ▾** picker in the titlebar (edits bump the version; old ones stay) |
