@@ -97,6 +97,7 @@ const cardProp = {
 
 const idProp = {
     id: z.string().optional().describe('To EDIT an existing diagram: pass its id (returned when it was created, or found via list_diagrams). The new content is saved as the next version and the diagram\'s existing tab updates in place — no new tab. The user\'s hand-arranged element positions carry forward automatically, keyed by element id — keep ids stable across edits. Omit to create a new diagram in a new tab. Users asking for edits mean the LATEST version unless they name one.'),
+    fileName: z.string().optional().describe('Only when creating: a short, meaningful file name for the diagram (no extension), e.g. "shred-leader-path" or "pack-tile-overview" — what it shows, in 2-5 words. Defaults to the first words of the title. Ignored on edits; the file keeps its name.'),
     baseVersion: z.number().int().optional().describe('Only with `id`: carry the hand-arranged layout from THIS version instead of the latest one. Use when the user asks to edit starting from an older version (e.g. "go back to v6 and add X" → open_diagram(id, 6) for the content, then resubmit with baseVersion: 6). Content always comes from the spec you submit; baseVersion only selects which version\'s arrangement is inherited.'),
 };
 
@@ -387,7 +388,7 @@ function attachAnchors(diagram: Record<string, unknown>) {
     }
 }
 
-async function deliver(diagram: Record<string, unknown>, editId?: string, baseVersion?: number): Promise<Delivery> {
+async function deliver(diagram: Record<string, unknown>, editId?: string, baseVersion?: number, fileName?: string): Promise<Delivery> {
     let id: string;
     let version: number;
     if (editId) {
@@ -432,15 +433,13 @@ async function deliver(diagram: Record<string, unknown>, editId?: string, baseVe
         // see chooseDiagramLocation(). `id` (above) is the internal handle
         // used for edits/lookups regardless of where the file sits or what
         // it's named; the two are independent on purpose.
-        const { dir, name } = chooseDiagramLocation(diagram, { workspaceRoot: findWorkspaceRoot(), title: String(diagram.title ?? 'diagram') });
+        const { dir, name } = chooseDiagramLocation(diagram, {
+            workspaceRoot: findWorkspaceRoot(), title: String(diagram.title ?? 'diagram'), fileName,
+        });
+        // another diagram may already have that name — number this one
+        // ("-2", "-3") rather than clobber it or add random characters
         let file = path.join(dir, name + JARBOBO_EXT);
-        // an unrelated diagram might already have claimed that exact name —
-        // disambiguate rather than clobber it
-        if (fs.existsSync(file)) {
-            try {
-                if (readContainer(file).id !== id) { file = path.join(dir, `${name}-${id.slice(-4)}${JARBOBO_EXT}`); }
-            } catch { file = path.join(dir, `${name}-${id.slice(-4)}${JARBOBO_EXT}`); }
-        }
+        for (let n = 2; fs.existsSync(file); n++) { file = path.join(dir, `${name}-${n}${JARBOBO_EXT}`); }
         writeContainer(file, { id, versions: [diagram] });
         const meta = withMeta(diagram, id, version, file);
         const { delivered, err } = await postToPanel(meta);
@@ -501,6 +500,7 @@ const server = new McpServer(
             '• READ BEFORE DRAWING: only attach a `file`+`line` you opened in this session. If an element is inferred from names or nearby code rather than read, say so in its `detail`. ' +
             '• OFFER A NEXT STEP: after drawing, suggest two or three follow-up diagrams (zoom into one node, trace one message, show the failure path). ' +
             'SEQUENCE DIAGRAMS stay readable only when small: ONE path per diagram (draw a second diagram for a second path), at most ~7 participants, message labels under ~40 characters, at most two levels of nested frames, end activations with `reply` messages, and put long explanations in `detail` rather than notes. ' +
+            'FILE NAMES: when creating a diagram, pass `fileName` — 2-5 words naming what it shows ("shred-leader-path", "firedancer-overview"), so the user can find it in their file tree. ' +
             'USER NOTES: the user can write their own notes on elements; open_diagram and edit results list them. Read them before redrawing: answer the questions in them, correct misreadings, and keep the noted elements\' ids and message labels unchanged so the notes stay attached. ' +
             'Prefer two or three focused diagrams over one overloaded one.',
     },
@@ -575,7 +575,7 @@ server.registerTool(
         },
     },
     async (args) => {
-        const { id, baseVersion, ...spec } = args;
+        const { id, baseVersion, fileName, ...spec } = args;
         const nodeIds = new Set(spec.nodes.map(n => n.id));
         const groupIds = new Set((spec.groups ?? []).map(g => g.id));
         const problems: string[] = [];
@@ -601,7 +601,7 @@ server.registerTool(
         checkRefs('edge(s)', (spec.edges ?? []).map(e => ({ name: `${e.from}→${e.to}${e.label ? ` (${e.label})` : ''}`, ...e })), problems);
         if (problems.length) { return fail(problems); }
         try {
-            const d = await deliver({ type: 'graph', ...spec }, id, baseVersion);
+            const d = await deliver({ type: 'graph', ...spec }, id, baseVersion, fileName);
             return ok('graph', spec.title, `${spec.nodes.length} nodes, ${(spec.edges ?? []).length} edges`, d);
         } catch (e) {
             return fail([String((e as Error).message)]);
@@ -650,7 +650,7 @@ server.registerTool(
         },
     },
     async (args) => {
-        const { id, baseVersion, ...spec } = args;
+        const { id, baseVersion, fileName, ...spec } = args;
         const ids = new Set(spec.participants.map(p => p.id));
         const problems: string[] = [];
         spec.messages.forEach((m, i) => {
@@ -673,7 +673,7 @@ server.registerTool(
         checkRefs('message(s)', spec.messages.map((m, i) => ({ name: `${i}: ${m.label}`, ...m })), problems);
         if (problems.length) { return fail(problems); }
         try {
-            const d = await deliver({ type: 'sequence', ...spec }, id, baseVersion);
+            const d = await deliver({ type: 'sequence', ...spec }, id, baseVersion, fileName);
             return ok('sequence diagram', spec.title, `${spec.participants.length} participants, ${spec.messages.length} messages`, d);
         } catch (e) {
             return fail([String((e as Error).message)]);
@@ -718,7 +718,7 @@ server.registerTool(
         },
     },
     async (args) => {
-        const { id, baseVersion, ...spec } = args;
+        const { id, baseVersion, fileName, ...spec } = args;
         const ids = new Set(spec.classes.map(c => c.id));
         const problems: string[] = [];
         for (const r of spec.relations ?? []) {
@@ -729,7 +729,7 @@ server.registerTool(
         checkRefs('relation(s)', (spec.relations ?? []).map(r => ({ name: `${r.from}→${r.to} (${r.kind})`, ...r })), problems);
         if (problems.length) { return fail(problems); }
         try {
-            const d = await deliver({ type: 'class', ...spec }, id, baseVersion);
+            const d = await deliver({ type: 'class', ...spec }, id, baseVersion, fileName);
             return ok('class diagram', spec.title, `${spec.classes.length} classes, ${(spec.relations ?? []).length} relations`, d);
         } catch (e) {
             return fail([String((e as Error).message)]);
@@ -778,7 +778,7 @@ server.registerTool(
         },
     },
     async (args) => {
-        const { id, baseVersion, ...spec } = args;
+        const { id, baseVersion, fileName, ...spec } = args;
         const laneIds = new Set(spec.lanes.map(l => l.id));
         const nodeIds = new Set(spec.nodes.map(n => n.id));
         const problems: string[] = [];
@@ -793,7 +793,7 @@ server.registerTool(
         checkRefs('edge(s)', (spec.edges ?? []).map(e => ({ name: `${e.from}→${e.to}${e.label ? ` (${e.label})` : ''}`, ...e })), problems);
         if (problems.length) { return fail(problems); }
         try {
-            const d = await deliver({ type: 'swimlane', ...spec }, id, baseVersion);
+            const d = await deliver({ type: 'swimlane', ...spec }, id, baseVersion, fileName);
             return ok('swimlane diagram', spec.title, `${spec.lanes.length} lanes, ${spec.nodes.length} steps, ${(spec.edges ?? []).length} edges`, d);
         } catch (e) {
             return fail([String((e as Error).message)]);
@@ -835,7 +835,7 @@ server.registerTool(
         },
     },
     async (args) => {
-        const { id, baseVersion, ...spec } = args;
+        const { id, baseVersion, fileName, ...spec } = args;
         const problems: string[] = [];
         if (spec.tracks?.length) {
             const trackIds = new Set(spec.tracks.map(t => t.id));
@@ -849,7 +849,7 @@ server.registerTool(
         checkRefs('item(s)', spec.items.map(it => ({ name: it.id, ...it })), problems, { hrefCounts: true });
         if (problems.length) { return fail(problems); }
         try {
-            const d = await deliver({ type: 'timeline', ...spec }, id, baseVersion);
+            const d = await deliver({ type: 'timeline', ...spec }, id, baseVersion, fileName);
             return ok('timeline', spec.title, `${spec.items.length} items${spec.tracks?.length ? `, ${spec.tracks.length} tracks` : ''}`, d);
         } catch (e) {
             return fail([String((e as Error).message)]);

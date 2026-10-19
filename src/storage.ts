@@ -5,11 +5,11 @@
  * Diagram files live wherever they're semantically relevant — a NEW diagram's
  * container file (one per lineage, holding every version) is placed next to
  * the code it documents:
- *   - all its code refs point at one file  -> named after THAT file, alongside it
- *   - refs span several files under one dir -> named after that shared directory
- *     (the "subsystem"), placed in it
- *   - no refs at all                       -> named after the title, at the
- *     workspace root (or cwd)
+ *   - all its code refs point at one file  -> alongside that file
+ *   - refs span several files under one dir -> in that shared directory
+ *   - no refs, or refs all over the repo   -> at the workspace root (or cwd)
+ * and named after what it shows: the `fileName` the caller gave, else the
+ * title's first few words ("shred-tile-leader-path.jarbobo").
  * See chooseDiagramLocation(). There's no dedicated diagrams folder — a
  * workspace is searched recursively (walkDiagramFiles) to find/list them.
  *
@@ -165,25 +165,37 @@ function slugForFile(name: string): string {
     return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'diagram';
 }
 
+// A title cut to whole words, at most ~48 characters and not ending on a
+// filler word ("…-arrives-and-is"), so names stay readable.
+const FILLER = new Set(['a', 'an', 'and', 'the', 'of', 'to', 'in', 'on', 'for', 'with', 'is', 'are', 'by', 'from', 'at', 'or']);
+function nameFromTitle(title: string): string {
+    const words: string[] = [];
+    let len = 0;
+    for (const w of slugForFile(title).split('-').filter(Boolean)) {
+        if (len + (words.length ? 1 : 0) + w.length > 48) { break; }
+        len += (words.length ? 1 : 0) + w.length;
+        words.push(w);
+    }
+    while (words.length > 1 && FILLER.has(words[words.length - 1])) { words.pop(); }
+    return words.join('-') || 'diagram';
+}
+
 /** Where a NEW diagram's container file should live: named and placed after
  *  whatever code it documents, rather than in a dedicated diagrams folder. */
 export function chooseDiagramLocation(
     diagram: Record<string, unknown>,
-    opts: { workspaceRoot?: string; title?: string },
+    opts: { workspaceRoot?: string; title?: string; fileName?: string },
 ): { dir: string; name: string } {
+    // Named after what the diagram shows, never after a directory: several
+    // diagrams over one area would otherwise all be "src", told apart only by
+    // a random suffix.
+    const name = opts.fileName ? slugForFile(opts.fileName.replace(/\.jarbobo$/, '')) : nameFromTitle(opts.title ?? 'diagram');
+    const root = opts.workspaceRoot ?? process.cwd();
     const refs = collectRefFiles(diagram);
-    if (!refs.length) {
-        return { dir: opts.workspaceRoot ?? process.cwd(), name: slugForFile(opts.title ?? 'diagram') };
-    }
-    if (refs.length === 1 || new Set(refs).size === 1) {
-        const file = refs[0];
-        return { dir: path.dirname(file), name: slugForFile(path.basename(file, path.extname(file))) };
-    }
+    if (!refs.length) { return { dir: root, name }; }
+    if (refs.length === 1 || new Set(refs).size === 1) { return { dir: path.dirname(refs[0]), name }; }
     const commonDir = longestCommonDir(refs);
-    // refs span totally unrelated top-level areas (or the workspace root
-    // itself) — a "subsystem" name isn't meaningful, fall back to the title
-    if (!commonDir || commonDir === opts.workspaceRoot || commonDir === path.sep) {
-        return { dir: opts.workspaceRoot ?? process.cwd(), name: slugForFile(opts.title ?? 'diagram') };
-    }
-    return { dir: commonDir, name: slugForFile(path.basename(commonDir)) };
+    // refs span unrelated top-level areas (or the workspace root itself)
+    if (!commonDir || commonDir === opts.workspaceRoot || commonDir === path.sep) { return { dir: root, name }; }
+    return { dir: commonDir, name };
 }
