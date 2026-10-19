@@ -43,18 +43,28 @@
 
 **Security (for private repos)**
 
-- Code previews in the side panel, hot paths and exports only read files **inside the open
-  workspace**, and nothing in VS Code's Restricted Mode, so a diagram from someone else can't
-  pull in files like `~/.ssh/…`.
+- Code previews in the side panel and hot paths only read files **inside the open
+  workspace**, by absolute path after resolving symlinks, and nothing in VS Code's Restricted
+  Mode, so a diagram from someone else can't pull in files like `~/.ssh/…`.
+- The MCP server only snapshots referenced lines from files inside the workspace, and never
+  writes a diagram file outside it.
 - Links from diagrams open only as `http`, `https` or `mailto`, after a confirmation.
-- The localhost bridge needs a per-session token from `~/.jarbobo/port.json` (readable only by
-  you) and rejects anything a browser sends.
+- The localhost bridge needs a per-session token from `~/.jarbobo/port.json` (created 0600 in a
+  0700 folder, never readable by anyone else even briefly) and rejects anything a browser sends.
 - **Exports are removed entirely** — no export command, no titlebar item, no `export_diagram`
   tool — so diagrams (and the code they show) can't be written out of the repo. The export
   sections of the original README below don't apply to this fork.
 - `setup.sh install` adds `*.jarbobo` to your global git ignore: diagrams hold absolute paths,
-  copies of code lines and your notes, and should never be committed by accident.
-- Diagram text returned to Claude is labelled as data, not instructions.
+  copies of code lines and your notes, and should never be committed by accident. The MCP
+  server also adds it to each repo's local `.git/info/exclude` when it writes a diagram there,
+  so this holds on machines `setup.sh` never ran on, such as a Remote-SSH host. (A `.jarbobo`
+  file someone already committed stays tracked: notes you add to it show up in `git status`.)
+- Under **Remote-SSH**, the extension and MCP server run on the remote host: run `setup.sh`
+  there too. Set `JARBOBO_REF` to a reviewed tag or commit to pin what the installer builds;
+  it only installs the exact versions in `package-lock.json`.
+- Diagram text returned to Claude (titles, specs, notes) is JSON-encoded and labelled as data,
+  not instructions. "Ask Claude" prompts quote diagram text the same way and leave tooltip and
+  detail prose out, since you paste them as your own message.
 
 **Everywhere**
 

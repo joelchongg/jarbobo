@@ -17,6 +17,7 @@
  * before this scheme existed): a versioned lineage of separate files at
  * ~/.jarbobo/diagrams/<id>/v<N>.json. Nothing new is ever written there.
  */
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -83,6 +84,41 @@ export function serializeContainer(c: Container): string {
 export function writeContainer(file: string, c: Container): void {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, serializeContainer(c));
+}
+
+/** Ids name legacy ~/.jarbobo/diagrams/<id> folders, so they must never
+ *  carry path separators or dot-segments. Every id jarbobo mints matches. */
+export function isSafeId(id: string): boolean {
+    return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) && !id.includes('..');
+}
+
+/** True when `p` resolves (symlinks included) to `root` or something under
+ *  it. A path that cannot be resolved is outside. */
+export function isInside(root: string, p: string): boolean {
+    if (!path.isAbsolute(p)) { return false; }
+    let real: string, realRoot: string;
+    try { real = fs.realpathSync(p); } catch { return false; }
+    try { realRoot = fs.realpathSync(root); } catch { return false; }
+    return real === realRoot || real.startsWith(realRoot + path.sep);
+}
+
+/** Keep diagrams out of `git status` in the repo that holds `file`, via its
+ *  local (never committed) info/exclude. Done where the file is written, so
+ *  it also covers machines setup.sh never ran on, like a Remote-SSH host. */
+export function ensureGitExcluded(file: string): void {
+    try {
+        const dir = path.dirname(file);
+        const out = execFileSync('git', ['-C', dir, 'rev-parse', '--git-path', 'info/exclude'], {
+            encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000,
+        }).trim();
+        if (!out) { return; }
+        const exclude = path.isAbsolute(out) ? out : path.join(dir, out);
+        let text = '';
+        try { text = fs.readFileSync(exclude, 'utf8'); } catch { /* not there yet */ }
+        if (text.split(/\r?\n/).includes('*' + JARBOBO_EXT)) { return; }
+        fs.mkdirSync(path.dirname(exclude), { recursive: true });
+        fs.appendFileSync(exclude, `${text && !text.endsWith('\n') ? '\n' : ''}\n# jarbobo diagrams (local only)\n*${JARBOBO_EXT}\n`);
+    } catch { /* not a git repo, or git missing */ }
 }
 
 /** Workspace root, used as a fallback anchor when a diagram has no code refs
@@ -193,9 +229,9 @@ export function chooseDiagramLocation(
     const root = opts.workspaceRoot ?? process.cwd();
     const refs = collectRefFiles(diagram);
     if (!refs.length) { return { dir: root, name }; }
-    if (refs.length === 1 || new Set(refs).size === 1) { return { dir: path.dirname(refs[0]), name }; }
-    const commonDir = longestCommonDir(refs);
-    // refs span unrelated top-level areas (or the workspace root itself)
-    if (!commonDir || commonDir === opts.workspaceRoot || commonDir === path.sep) { return { dir: root, name }; }
-    return { dir: commonDir, name };
+    const dir = refs.length === 1 || new Set(refs).size === 1 ? path.dirname(refs[0]) : longestCommonDir(refs);
+    // refs span unrelated areas, or reach outside the workspace (a common
+    // dir above it, like ~ for ~/.aws + ~/proj): never write out there
+    if (!dir || dir === path.sep || !isInside(root, dir)) { return { dir: root, name }; }
+    return { dir, name };
 }

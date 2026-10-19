@@ -16,10 +16,17 @@
 # On a fresh machine, without a checkout:
 #   curl -fsSL https://raw.githubusercontent.com/joelchongg/jarbobo/main/setup.sh | bash
 # clones into $JARBOBO_DIR (default ~/jarbobo) from $JARBOBO_REPO, then installs.
+# Set JARBOBO_REF to a tag or commit you have reviewed to build exactly that
+# instead of whatever main is today.
+#
+# Under VS Code Remote-SSH the extension and the MCP server run on the REMOTE
+# host: run this script there too, so the git ignore and MCP registration
+# exist where the diagrams are written.
 
 set -euo pipefail
 
 JARBOBO_REPO="${JARBOBO_REPO:-https://github.com/joelchongg/jarbobo.git}"
+JARBOBO_REF="${JARBOBO_REF:-}"
 NODE_MIN_MAJOR=18
 
 DRY_RUN=0
@@ -31,7 +38,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --editor)  EDITOR_CHOICE="${2:?--editor needs code|cursor|all|none}"; shift ;;
-    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     install|project|check)
       [ -z "$CMD" ] || { echo "only one command at a time" >&2; exit 2; }
       CMD="$1" ;;
@@ -129,13 +136,21 @@ ensure_checkout() {
     step "Cloning $JARBOBO_REPO into $ROOT"
     run git clone "$JARBOBO_REPO" "$ROOT"
   fi
+  if [ -n "$JARBOBO_REF" ]; then
+    run git -C "$ROOT" fetch --quiet origin "$JARBOBO_REF" || true
+    run git -C "$ROOT" -c advice.detachedHead=false checkout --quiet "$JARBOBO_REF" \
+      || die "cannot check out JARBOBO_REF=$JARBOBO_REF in $ROOT"
+    ok "pinned to $JARBOBO_REF ($(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?'))"
+  fi
 }
 
 build() {
   step "Building"
   cd "$ROOT"
-  # npm ci keeps package-lock.json exact; fall back if the lock is out of sync.
-  run npm ci --no-audit --no-fund || run npm install --no-audit --no-fund
+  # npm ci installs exactly what package-lock.json pins. No `npm install`
+  # fallback: that would quietly resolve fresh, unreviewed versions.
+  run npm ci --no-audit --no-fund \
+    || die "npm ci failed; if package-lock.json is out of sync, fix and review it rather than installing unpinned packages"
   run npm run --silent compile
   run npm run --silent vendor >/dev/null
   VSIX="$ROOT/jarbobo-$(ext_version).vsix"
@@ -282,6 +297,7 @@ cmd_install() {
   verify_server
   step "Done"
   echo "  Restart Claude Code and reload your editor window."
+  [ -n "${SSH_CONNECTION:-}" ] || echo "  Using VS Code Remote-SSH? Run this script on the remote host too."
   echo "  For each codebase you study:  $ROOT/setup.sh project <dir>"
 }
 

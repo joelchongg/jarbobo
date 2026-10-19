@@ -6,7 +6,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import {
     JARBOBO_EXT, walkDiagramFiles, readContainer, writeContainer, parseContainer,
-    serializeContainer, isContainerFile, stripMeta, type Container, type Note,
+    serializeContainer, isContainerFile, stripMeta, isSafeId, isInside, type Container, type Note,
 } from './storage.js';
 
 const HOME = path.join(os.homedir(), '.jarbobo');
@@ -43,6 +43,9 @@ function updateStatus() {
 
 export function activate(context: vscode.ExtensionContext) {
     extCtx = context;
+    // ~/.jarbobo holds the bridge token: private before anything goes in it
+    fs.mkdirSync(HOME, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(HOME, 0o700); } catch { /* best-effort */ }
     fs.mkdirSync(DIAGRAMS_DIR, { recursive: true });
 
     logChannel = vscode.window.createOutputChannel('Jarbobo');
@@ -160,7 +163,10 @@ function registerMcpProvider(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-    try { fs.unlinkSync(PORT_FILE); } catch { /* ignore */ }
+    // only our own: another window may have published its port since
+    try {
+        if (JSON.parse(fs.readFileSync(PORT_FILE, 'utf8')).token === BRIDGE_TOKEN) { fs.unlinkSync(PORT_FILE); }
+    } catch { /* ignore */ }
     server?.close();
 }
 
@@ -372,28 +378,29 @@ const LANG_BY_EXT: Record<string, string> = {
 };
 const SNIPPET_MAX_LINES = 120;
 const SNIPPET_CONTEXT = 2; // context lines around each referenced range
-// Code previews (side panel, hot path, exports) read only files inside the
-// open workspace folders, and nothing in Restricted Mode: a diagram from
-// someone else must not be able to pull ~/.ssh/... into the panel or into an
-// exported HTML file. Opening a file yourself ("Go to source") is unaffected.
-function previewBlocked(file: string): string | undefined {
-    if (!vscode.workspace.isTrusted) { return 'not previewed: this workspace is in Restricted Mode'; }
+// Code previews (side panel, hot path) read only files inside the open
+// workspace folders, and nothing in Restricted Mode: a diagram from someone
+// else must not be able to pull ~/.ssh/... into the panel. Returns the
+// resolved path to read, so the file checked is the file opened (a relative
+// path would otherwise be checked against the cwd but opened from /).
+// Opening a file yourself ("Go to source") is unaffected.
+function previewPath(file: string): { real: string } | { err: string } {
+    if (!vscode.workspace.isTrusted) { return { err: 'not previewed: this workspace is in Restricted Mode' }; }
+    if (!path.isAbsolute(file)) { return { err: 'not previewed: not an absolute path' }; }
     let real: string;
-    try { real = fs.realpathSync(file); } catch { return undefined; } // missing file: the read reports it
-    const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => {
-        try { return fs.realpathSync(f.uri.fsPath); } catch { return f.uri.fsPath; }
-    });
-    if (roots.some((root) => real === root || real.startsWith(root + path.sep))) { return undefined; }
-    return 'not previewed: outside this workspace (use "Go to source" if you trust it)';
+    try { real = fs.realpathSync(file); } catch { return { err: 'cannot read: file not found' }; }
+    const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    if (roots.some((root) => isInside(root, real))) { return { real }; }
+    return { err: 'not previewed: outside this workspace (use "Go to source" if you trust it)' };
 }
 
 async function readSnippet(r: { file?: string; line?: number; ranges?: RefRange[]; _anchor?: RefAnchor }) {
     try {
         if (!r.file) { throw new Error('missing file'); }
-        const blocked = previewBlocked(r.file);
-        if (blocked) { throw new Error(blocked); }
+        const p = previewPath(String(r.file));
+        if ('err' in p) { throw new Error(p.err); }
         // openTextDocument (not fs) so unsaved edits are previewed too
-        const doc = await vscode.workspace.openTextDocument(r.file);
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(p.real));
         const all = doc.getText().split(/\r?\n/);
         const clamp = (n: number) => Math.min(Math.max(1, Math.round(n)), all.length);
         // drift recovery BEFORE clamp/sort (anchors are index-aligned with the
@@ -492,7 +499,8 @@ async function onWebviewMessage(
                     const ver = Number(diagram._version) || c.versions.length;
                     if (c.versions[ver - 1]) { c.versions[ver - 1] = stripMeta(diagram); }
                     writeContainer(file, c);
-                } else {
+                } else if (isInside(DIAGRAMS_DIR, file) && /^v\d+\.json$/.test(path.basename(file))) {
+                    // legacy lineage version — and nothing else on disk
                     fs.writeFileSync(file, JSON.stringify(stripMeta(diagram), null, 2));
                 }
             } catch { /* best-effort */ }
@@ -530,7 +538,9 @@ async function onWebviewMessage(
                 : vscode.ViewColumn.One;
         log(`open ref: target=${msg.target} panel.viewColumn=${String(panel.viewColumn)} panel.active=${panel.active} -> viewColumn=${viewColumn}`);
         try {
-            const doc = await vscode.workspace.openTextDocument(msg.file);
+            // absolute only: a relative path would silently open from /
+            if (!path.isAbsolute(msg.file)) { throw new Error('not an absolute path'); }
+            const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(msg.file));
             // drift recovery: re-anchor the jump target against the current text
             const docLines = doc.getText().split(/\r?\n/);
             const anchoredRanges = msg.ranges?.length ? reanchorRanges(docLines, msg.ranges, msg.anchor) : undefined;
@@ -690,15 +700,9 @@ function buildHtml(webview: vscode.Webview): string {
 
 // ---------------------------------------------------------------- history
 
-function loadDiagramFile(file: string): unknown {
-    const full = path.join(DIAGRAMS_DIR, file);
-    const d = JSON.parse(fs.readFileSync(full, 'utf8'));
-    d._file = full; // so later layout changes persist back to this file
-    return d;
-}
-
 // Versioned lineages: ~/.jarbobo/diagrams/<id>/v<N>.json (written by the MCP server).
 function listVersions(id: string): number[] {
+    if (!isSafeId(id)) { return []; }
     try {
         return fs.readdirSync(path.join(DIAGRAMS_DIR, id))
             .map(f => /^v(\d+)\.json$/.exec(f)?.[1])
@@ -711,6 +715,7 @@ function listVersions(id: string): number[] {
 }
 
 function loadLineageVersion(id: string, version: number): Record<string, unknown> {
+    if (!isSafeId(id) || !Number.isInteger(version) || version < 1) { throw new Error('invalid diagram id or version'); }
     const file = path.join(DIAGRAMS_DIR, id, `v${version}.json`);
     const d = JSON.parse(fs.readFileSync(file, 'utf8'));
     d._id = id;
@@ -959,8 +964,22 @@ function startServer() {
         if (addr && typeof addr === 'object') {
             fs.mkdirSync(HOME, { recursive: true, mode: 0o700 });
             try { fs.chmodSync(HOME, 0o700); } catch { /* best-effort */ }
-            fs.writeFileSync(PORT_FILE, JSON.stringify({ port: addr.port, token: BRIDGE_TOKEN, pid: process.pid, startedAt: new Date().toISOString() }), { mode: 0o600 });
-            fs.chmodSync(PORT_FILE, 0o600); // writeFileSync's mode only applies to a new file
+            // the token is never in a file anyone else can read, even briefly:
+            // a fresh 0600 file (O_EXCL, so not someone's planted link),
+            // renamed over port.json in one step
+            const tmp = `${PORT_FILE}.${process.pid}.${crypto.randomBytes(4).toString('hex')}`;
+            try {
+                const fd = fs.openSync(tmp, 'wx', 0o600);
+                try { fs.writeSync(fd, JSON.stringify({ port: addr.port, token: BRIDGE_TOKEN, pid: process.pid, startedAt: new Date().toISOString() })); }
+                finally { fs.closeSync(fd); }
+                fs.renameSync(tmp, PORT_FILE);
+            } catch (e) {
+                try { fs.unlinkSync(tmp); } catch { /* never created */ }
+                log(`cannot publish the bridge port: ${e}`);
+                bridgeState = 'down';
+                updateStatus();
+                return;
+            }
             bridgePort = addr.port;
             bridgeState = 'up';
             updateStatus();
