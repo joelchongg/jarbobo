@@ -27,7 +27,7 @@ set -euo pipefail
 
 JARBOBO_REPO="${JARBOBO_REPO:-https://github.com/joelchongg/jarbobo.git}"
 JARBOBO_REF="${JARBOBO_REF:-}"
-NODE_MIN_MAJOR=18
+NODE_MIN_MAJOR=22  # @vscode/vsce 4 (packaging) needs 22+
 
 DRY_RUN=0
 EDITOR_CHOICE=all

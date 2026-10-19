@@ -82,14 +82,14 @@
     "package": "vsce package --allow-missing-repository"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@highlightjs/cdn-assets": "^11.11.1",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^3.3.0",
+    "@vscode/vsce": "^4.0.0",
     "cytoscape": "^3.30.0",
     "cytoscape-dagre": "^2.5.0",
     "dagre": "^0.8.5",
