@@ -34,7 +34,11 @@ export const FILE_HEADER =
     '//   https://github.com/tch1001/jarbobo\n' +
     '// The JSON below is the diagram data (one file per diagram, all versions inside).\n';
 
-export type Container = { id: string; versions: Array<Record<string, unknown>> };
+// The reader's own notes on elements, keyed by element ("node:pack",
+// "edge:a→b:label", "participant:stem", "message:a→b:label"). They live
+// beside the versions, not inside one, so a redraw or new version keeps them.
+export type Note = { text: string; label?: string; updated?: string };
+export type Container = { id: string; versions: Array<Record<string, unknown>>; notes?: Record<string, Note> };
 
 /** Strip a leading run of `//` comment lines (and an optional BOM) — safe on
  *  pure JSON too, which can never start with `//`. */
@@ -50,7 +54,7 @@ export function isContainerFile(file: string): boolean {
 export function stripMeta(d: Record<string, unknown>): Record<string, unknown> {
     const clean: Record<string, unknown> = {};
     for (const k of Object.keys(d)) {
-        if (k === '_id' || k === '_version' || k === '_versions' || k === '_file') { continue; }
+        if (k === '_id' || k === '_version' || k === '_versions' || k === '_file' || k === '_notes') { continue; }
         clean[k] = d[k];
     }
     return clean;
@@ -59,7 +63,8 @@ export function stripMeta(d: Record<string, unknown>): Record<string, unknown> {
 export function parseContainer(text: string): Container {
     const obj = JSON.parse(stripHeader(text)) as Record<string, unknown>;
     if (Array.isArray(obj.versions)) {
-        return { id: String(obj.id ?? ''), versions: obj.versions as Array<Record<string, unknown>> };
+        const notes = obj.notes && typeof obj.notes === 'object' ? obj.notes as Record<string, Note> : undefined;
+        return { id: String(obj.id ?? ''), versions: obj.versions as Array<Record<string, unknown>>, ...(notes ? { notes } : {}) };
     }
     // tolerate a bare single-diagram file
     return { id: String(obj.id ?? ''), versions: [obj] };
@@ -70,7 +75,8 @@ export function readContainer(file: string): Container {
 }
 
 export function serializeContainer(c: Container): string {
-    const body = JSON.stringify({ id: c.id, versions: c.versions.map(stripMeta) }, null, 2);
+    const notes = c.notes && Object.keys(c.notes).length ? { notes: c.notes } : {};
+    const body = JSON.stringify({ id: c.id, ...notes, versions: c.versions.map(stripMeta) }, null, 2);
     return FILE_HEADER + body + '\n';
 }
 

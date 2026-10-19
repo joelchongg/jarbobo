@@ -21,6 +21,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
     JARBOBO_EXT, findWorkspaceRoot, walkDiagramFiles, chooseDiagramLocation, readContainer, writeContainer,
+    type Note,
 } from './storage.js';
 import { exportDiagram, suggestFilename, type Diagram, type ExportFormat } from './exporters.js';
 
@@ -226,6 +227,24 @@ async function postToPanel(payload: Record<string, unknown>): Promise<{ delivere
     }
 }
 
+// The reader's notes on a diagram's elements (container files only).
+function notesOf(id: string): Record<string, Note> {
+    const store = resolveStore(id);
+    if (!store || store.kind !== 'container') { return {}; }
+    try { return readContainer(store.file).notes ?? {}; } catch { return {}; }
+}
+
+// Notes rendered for Claude, appended to open_diagram and edit results.
+function notesText(id: string): string {
+    const notes = notesOf(id);
+    const keys = Object.keys(notes);
+    if (!keys.length) { return ''; }
+    return `\n\nThe user's own notes on this diagram (${keys.length}). Read them: answer their questions, correct anything they misread, ` +
+        'and keep the noted elements\' ids and message labels unchanged in edits so the notes stay attached ' +
+        '(keys: node:<id>, edge:<from>→<to>:<label>, participant:<id>, message:<from>→<to>:<label>):\n' +
+        keys.map((k) => `- ${k}${notes[k].label ? ` ("${notes[k].label}")` : ''}: ${notes[k].text}`).join('\n');
+}
+
 function withMeta(diagram: Record<string, unknown>, id: string, version: number, knownFile?: string) {
     // _file lets the extension persist user rearrangements back into this
     // diagram's storage (its .jarbobo container, or a legacy v<N>.json);
@@ -240,6 +259,7 @@ function withMeta(diagram: Record<string, unknown>, id: string, version: number,
         _version: version,
         _versions: store ? storeVersions(store) : [version],
         _file: store ? storeFile(store, version) : path.join(DIAGRAMS_DIR, id, `v${version}.json`),
+        _notes: notesOf(id),
     };
 }
 
@@ -444,6 +464,7 @@ function ok(kind: string, title: string, stats: string, d: Delivery) {
     } else {
         text = `Updated diagram "${d.id}" to v${d.version} (${stats}) — its existing tab now shows v${d.version}. Older versions stay selectable in the panel's version picker; open_diagram can bring one back explicitly.`;
     }
+    if (d.version > 1) { text += notesText(d.id); }
     return { content: [{ type: 'text' as const, text }] };
 }
 
@@ -480,6 +501,7 @@ const server = new McpServer(
             '• READ BEFORE DRAWING: only attach a `file`+`line` you opened in this session. If an element is inferred from names or nearby code rather than read, say so in its `detail`. ' +
             '• OFFER A NEXT STEP: after drawing, suggest two or three follow-up diagrams (zoom into one node, trace one message, show the failure path). ' +
             'SEQUENCE DIAGRAMS stay readable only when small: ONE path per diagram (draw a second diagram for a second path), at most ~7 participants, message labels under ~40 characters, at most two levels of nested frames, end activations with `reply` messages, and put long explanations in `detail` rather than notes. ' +
+            'USER NOTES: the user can write their own notes on elements; open_diagram and edit results list them. Read them before redrawing: answer the questions in them, correct misreadings, and keep the noted elements\' ids and message labels unchanged so the notes stay attached. ' +
             'Prefer two or three focused diagrams over one overloaded one.',
     },
 );
@@ -923,7 +945,7 @@ server.registerTool(
         return {
             content: [{
                 type: 'text' as const,
-                text: `${shown}\n\nSpec of "${id}" v${v} (resubmit via the matching draw tool with id "${id}" to make this the newest version):\n${JSON.stringify(spec)}`,
+                text: `${shown}\n\nSpec of "${id}" v${v} (resubmit via the matching draw tool with id "${id}" to make this the newest version):\n${JSON.stringify(spec)}${notesText(id)}`,
             }],
         };
     },

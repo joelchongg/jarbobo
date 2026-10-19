@@ -6,7 +6,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import {
     JARBOBO_EXT, walkDiagramFiles, readContainer, writeContainer, parseContainer,
-    serializeContainer, isContainerFile, stripMeta, type Container,
+    serializeContainer, isContainerFile, stripMeta, type Container, type Note,
 } from './storage.js';
 import { EXPORTERS, exportDiagram, suggestFilename, type Diagram, type ExportFormat } from './exporters.js';
 
@@ -436,11 +436,25 @@ async function readSnippet(r: { file?: string; line?: number; ranges?: RefRange[
 
 async function onWebviewMessage(
     panel: vscode.WebviewPanel,
-    msg: { type: string; file?: string; line?: number; ranges?: RefRange[]; anchor?: RefAnchor; highlights?: RefHighlight[]; url?: string; target?: string; follow?: boolean; positions?: unknown; id?: string; version?: number; direction?: string; reqId?: number; refs?: Array<{ file?: string; line?: number; ranges?: RefRange[]; _anchor?: RefAnchor }>; format?: string; ok?: boolean; data?: string; encoding?: string; error?: string },
+    msg: { type: string; file?: string; line?: number; ranges?: RefRange[]; anchor?: RefAnchor; highlights?: RefHighlight[]; url?: string; target?: string; follow?: boolean; notes?: Record<string, unknown>; positions?: unknown; id?: string; version?: number; direction?: string; reqId?: number; refs?: Array<{ file?: string; line?: number; ranges?: RefRange[]; _anchor?: RefAnchor }>; format?: string; ok?: boolean; data?: string; encoding?: string; error?: string },
 ) {
     if (msg.type === 'ready') {
         const diagram = panels.get(panel);
         if (diagram) { panel.webview.postMessage({ type: 'render', diagram }); }
+    } else if (msg.type === 'notes') {
+        // the reader added, changed or deleted a note — notes are per diagram,
+        // stored beside the versions
+        const diagram = panels.get(panel) as Record<string, unknown> | undefined;
+        if (!diagram) { return; }
+        diagram._notes = msg.notes ?? {};
+        const file = diagram._file as string | undefined;
+        if (file && isContainerFile(file)) {
+            try {
+                const c = readContainer(file);
+                c.notes = (msg.notes ?? {}) as Record<string, Note>;
+                writeContainer(file, c);
+            } catch (e) { log(`notes persist failed: ${e}`); }
+        }
     } else if (msg.type === 'layout') {
         // user rearranged (or reset) node positions — remember them and persist to disk
         const diagram = panels.get(panel) as Record<string, unknown> | undefined;
@@ -785,6 +799,7 @@ function containerPayload(file: string, version?: number): Record<string, unknow
     d._version = v;
     d._versions = c.versions.map((_, i) => i + 1);
     d._file = file;
+    d._notes = c.notes ?? {};
     return d;
 }
 
@@ -859,6 +874,7 @@ function containerPayloadFromText(text: string, file: string, version?: number):
     d._version = v;
     d._versions = c.versions.map((_, i) => i + 1);
     d._file = file;
+    d._notes = c.notes ?? {};
     return d;
 }
 
@@ -891,6 +907,21 @@ class JarboboEditorProvider implements vscode.CustomTextEditorProvider {
             if (!msg || typeof msg !== 'object') { return; }
             if (msg.type === 'ready') { render(); return; }
             if (msg.type === 'loadVersion' && typeof msg.version === 'number') { render(msg.version); return; }
+            if (msg.type === 'notes') {
+                // saved straight away (unlike layout): Claude reads notes from disk
+                selfEdit = true;
+                try {
+                    const c = parseContainer(document.getText());
+                    c.notes = (msg.notes ?? {}) as Record<string, Note>;
+                    const edit = new vscode.WorkspaceEdit();
+                    const full = new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
+                    edit.replace(document.uri, full, serializeContainer(c));
+                    await vscode.workspace.applyEdit(edit);
+                    await document.save();
+                } catch (e) { log(`custom editor: notes persist failed: ${e}`); }
+                selfEdit = false;
+                return;
+            }
             if (msg.type === 'layout') {
                 selfEdit = true;
                 try {

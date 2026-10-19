@@ -272,6 +272,7 @@
     detailTab = tab;
     const hot = tab === 'hot' && !!hotState;
     ['#detailBody', '#detailRefs', '#detailActions'].forEach((sel) => { $(sel).hidden = hot; });
+    if (hot) { detailNote.hidden = true; } else if (detailItem) { renderDetailNote(detailItem); }
     detailHot.hidden = !hot;
     detailTabs.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.tab === (hot ? 'hot' : 'overview')));
   }
@@ -294,6 +295,8 @@
 
   function openDetail(item, label, kind) {
     detailOpenedAt = Date.now();
+    detailItem = item;
+    renderDetailNote(item);
     $('#detailKind').textContent = kind || '';
     $('#detailTitle').textContent = label || '';
     $('#detailBody').textContent = item.detail || item.tooltip || '';
@@ -441,6 +444,136 @@
       hideTip();
     }
   });
+
+  // ---------------------------------------------------------------- notes
+  // The reader's own notes on elements, in d._notes (the extension saves them
+  // beside the diagram's versions, so redraws keep them), keyed by element:
+  // "node:<id>", "edge:<from>→<to>:<label>", "participant:<id>",
+  // "message:<from>→<to>:<label>". Renderers register which items can carry
+  // a note (noteTargets) and set noteOps = { refresh(), reveal(key) }.
+
+  let noteTargets = new Map();      // item object → { key, label }
+  const noteKeysShown = new Set();  // keys whose element is in this version
+  let noteOps = null;
+  let noteEditing = null;           // { key, label } while the editor is open
+  const noteEditor = document.createElement('div');
+  noteEditor.id = 'noteEditor';
+  noteEditor.hidden = true;
+  noteEditor.innerHTML = '<div class="noteHead"></div>'
+    + '<textarea rows="5" placeholder="What you understood, or what you don\'t get yet…"></textarea>'
+    + '<div class="noteBtns"><button class="noteSave">Save</button><button class="noteDelete">Delete</button>'
+    + '<button class="noteCancel">Cancel</button><span class="noteHint">⌘↵ save · Esc cancel</span></div>';
+  document.body.appendChild(noteEditor);
+  const noteText = noteEditor.querySelector('textarea');
+  const btnNotes = document.createElement('button');
+  btnNotes.className = 'tbtn';
+  btnNotes.id = 'btnNotes';
+  btnNotes.title = 'Your notes on this diagram';
+  btnNotes.hidden = true;
+  if ($('#btnTarget')) { $('#btnTarget').before(btnNotes); }
+  btnNotes.addEventListener('click', () => openNotesList());
+
+  function currentNotes() {
+    if (!currentDiagram._notes) { currentDiagram._notes = {}; }
+    return currentDiagram._notes;
+  }
+  function noteFor(item) {
+    const t = noteTargets.get(item);
+    return t && currentDiagram && currentDiagram._notes ? currentDiagram._notes[t.key] : undefined;
+  }
+  function openNoteEditor(target, x, y) {
+    noteEditing = target;
+    const existing = currentNotes()[target.key];
+    noteEditor.querySelector('.noteHead').textContent = 'Your note on ' + target.label;
+    noteText.value = existing ? existing.text : '';
+    noteEditor.querySelector('.noteDelete').hidden = !existing;
+    noteEditor.hidden = false;
+    const r = noteEditor.getBoundingClientRect();
+    noteEditor.style.left = Math.max(8, Math.min((x || 200) + 12, window.innerWidth - r.width - 8)) + 'px';
+    noteEditor.style.top = Math.max(42, Math.min((y || 120) + 12, window.innerHeight - r.height - 8)) + 'px';
+    noteText.focus();
+  }
+  function closeNoteEditor() { noteEditor.hidden = true; noteEditing = null; }
+  function saveNote(text) {
+    if (!noteEditing || !currentDiagram) { return; }
+    const notes = currentNotes();
+    const { key, label } = noteEditing;
+    if (text.trim()) { notes[key] = { text: text.trim(), label, updated: new Date().toISOString() }; }
+    else { delete notes[key]; }
+    vscodeApi.postMessage({ type: 'notes', notes });
+    vscodeApi.setState({ diagram: currentDiagram });
+    closeNoteEditor();
+    if (noteOps) { noteOps.refresh(); }
+    updateNotesBtn();
+    // refresh an open side panel showing this element's note
+    if (!detail.hidden && detailItem && noteTargets.get(detailItem) && noteTargets.get(detailItem).key === key) { renderDetailNote(detailItem); }
+  }
+  noteEditor.querySelector('.noteSave').onclick = () => saveNote(noteText.value);
+  noteEditor.querySelector('.noteDelete').onclick = () => saveNote('');
+  noteEditor.querySelector('.noteCancel').onclick = closeNoteEditor;
+  noteText.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveNote(noteText.value); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeNoteEditor(); }
+  });
+  function updateNotesBtn() {
+    const n = currentDiagram && currentDiagram._notes ? Object.keys(currentDiagram._notes).length : 0;
+    btnNotes.hidden = !n;
+    btnNotes.textContent = 'notes · ' + n;
+  }
+
+  // "Your note" in the side panel, under the explanation
+  const detailNote = document.createElement('div');
+  detailNote.id = 'detailNote';
+  detailNote.hidden = true;
+  $('#detailBody').after(detailNote);
+  let detailItem = null;
+  function renderDetailNote(item) {
+    detailNote.innerHTML = '';
+    const target = noteTargets.get(item);
+    detailNote.hidden = !target;
+    if (!target) { return; }
+    const note = noteFor(item);
+    if (note) {
+      detailNote.appendChild(Object.assign(document.createElement('div'), { className: 'noteLabel', textContent: 'Your note' }));
+      detailNote.appendChild(Object.assign(document.createElement('div'), { className: 'noteBody', textContent: note.text }));
+    }
+    const b = Object.assign(document.createElement('button'), { className: 'noteAdd', textContent: note ? 'edit note' : '✎ add a note' });
+    b.onclick = (e) => { const r = b.getBoundingClientRect(); openNoteEditor(target, r.left - 300, r.bottom); e.stopPropagation(); };
+    detailNote.appendChild(b);
+  }
+
+  // every note on the diagram, in the side panel
+  function openNotesList() {
+    const notes = currentDiagram && currentDiagram._notes ? currentDiagram._notes : {};
+    detailOpenedAt = Date.now();
+    detailItem = null;
+    $('#detailKind').textContent = 'notes';
+    $('#detailTitle').textContent = 'Your notes on this diagram';
+    $('#detailBody').textContent = '';
+    detailNote.hidden = true;
+    detailTabs.hidden = true;
+    detailHot.hidden = true;
+    hotState = null;
+    $('#detailActions').innerHTML = '';
+    const box = $('#detailRefs');
+    box.innerHTML = '';
+    box.hidden = false;
+    $('#detailBody').hidden = false;
+    Object.entries(notes).forEach(([key, note]) => {
+      const row = document.createElement('div');
+      row.className = 'noteItem';
+      const shown = noteKeysShown.has(key);
+      row.appendChild(Object.assign(document.createElement('div'), { className: 'noteLabel', textContent: note.label || key }));
+      row.appendChild(Object.assign(document.createElement('div'), { className: 'noteBody', textContent: note.text }));
+      if (!shown) { row.appendChild(Object.assign(document.createElement('div'), { className: 'noteOrphan', textContent: 'not in this version of the diagram' })); }
+      else {
+        row.title = 'Show it in the diagram';
+        row.onclick = () => { if (noteOps) { noteOps.reveal(key); } };
+      }
+      box.appendChild(row);
+    });
+    detail.hidden = false;
+  }
 
   // ---------------------------------------------------------------- component card
   // A diagram's `card` — purpose, the whole component as pseudocode, I/O,
@@ -1469,6 +1602,10 @@
     edgeLegend.hidden = true;
     pathLegend.hidden = true;
     pathOps = null;
+    noteTargets = new Map();
+    noteKeysShown.clear();
+    noteOps = null;
+    closeNoteEditor();
     $('#title').textContent = d.title || '';
     $('#title').title = d.title || '';
     const diagramType = {
@@ -1490,6 +1627,7 @@
       console.error(err);
     }
     afterRenderSearch();
+    updateNotesBtn();
   }
 
   // ================================================================ GRAPH
@@ -1899,6 +2037,17 @@
           el.style.transform = `translate(${p.x - w / 2}px, ${top}px)`;
         }
       });
+      noteMarks.forEach(({ ele, el }) => {
+        el.hidden = ele.hasClass('kHidden');
+        el.style.opacity = ele.hasClass('sFaded') || ele.hasClass('pFaded') ? '0.15' : '';
+        if (ele.isNode()) {
+          const bb = ele.renderedBoundingBox({ includeLabels: false });
+          el.style.transform = `translate(${bb.x2 - 9}px, ${bb.y2 - 9}px)`;
+        } else {
+          const m = ele.renderedMidpoint();
+          el.style.transform = `translate(${m.x + 8}px, ${m.y + 4}px)`;
+        }
+      });
       stepBadges.forEach(({ n, el }) => {
         const bb = n.renderedBoundingBox({ includeLabels: false });
         el.style.transform = `translate(${bb.x1 - 9}px, ${bb.y1 - 9}px)`;
@@ -2068,10 +2217,60 @@
       };
     }
 
-    if (placed.length || badges.length || paths.length) {
-      cy.on('render', () => { if (!placePending) { placePending = true; requestAnimationFrame(placeOverlay); } });
-      cy.ready(placeOverlay);
-    }
+    // ---- notes: double-click to write one; ✎ marks noted elements ----------
+    const edgeNoteKey = (e) => 'edge:' + e.source().id() + '→' + e.target().id() + ':' + (e.data('label') || '');
+    cy.nodes().forEach((n) => {
+      const item = n.data('_item');
+      if (n.isParent() || !item) { return; }
+      noteTargets.set(item, { key: 'node:' + n.id(), label: n.data('label') });
+      noteKeysShown.add('node:' + n.id());
+    });
+    cy.edges().forEach((e) => {
+      const item = e.data('_item');
+      if (!item) { return; }
+      const l = e.data('label');
+      noteTargets.set(item, { key: edgeNoteKey(e), label: `${e.source().data('label')} → ${e.target().data('label')}${l ? ' (' + l + ')' : ''}` });
+      noteKeysShown.add(edgeNoteKey(e));
+    });
+    cy.on('dbltap', 'node, edge', (ev) => {
+      const target = noteTargets.get(ev.target.data('_item'));
+      const oe = ev.originalEvent || {};
+      if (target) { openNoteEditor(target, oe.clientX, oe.clientY); }
+    });
+    const noteMarks = []; // { ele, el }
+    const elementForNote = (key) => cy.elements().filter((x) => {
+      const t = noteTargets.get(x.data('_item'));
+      return t && t.key === key;
+    }).first();
+    const refreshNoteMarks = () => {
+      noteMarks.splice(0).forEach(({ el }) => el.remove());
+      const notes = d._notes || {};
+      Object.keys(notes).forEach((key) => {
+        const ele = elementForNote(key);
+        if (!ele || ele.empty()) { return; }
+        const el = document.createElement('div');
+        el.className = 'noteMark';
+        el.textContent = '✎';
+        el.addEventListener('mousemove', (e) => showItemTip({ tooltip: 'Your note: ' + notes[key].text }, e.clientX, e.clientY, false));
+        el.addEventListener('mouseleave', hideTip);
+        el.addEventListener('click', (e) => { e.stopPropagation(); hideTip(); openNoteEditor(noteTargets.get(ele.data('_item')), e.clientX, e.clientY); });
+        overlay.appendChild(el);
+        noteMarks.push({ ele, el });
+      });
+      placeOverlay();
+    };
+    noteOps = {
+      refresh: refreshNoteMarks,
+      reveal(key) {
+        const ele = elementForNote(key);
+        if (!ele || ele.empty()) { return; }
+        cy.center(ele);
+        ele.flashClass('sCurrent', 1500);
+      },
+    };
+
+    cy.on('render', () => { if (!placePending) { placePending = true; requestAnimationFrame(placeOverlay); } });
+    cy.ready(() => { refreshNoteMarks(); placeOverlay(); });
 
     // ---- search -------------------------------------------------------------
     let searchHits = [];
@@ -2800,6 +2999,61 @@
       focus(i) { if (messageGeometries[i]) { focusMessage(i, { step: true }); } },
       clear: clearFocus,
     };
+    // ---- notes: double-click a participant or message; ✎ marks noted ones
+    const msgNoteKey = (m) => 'message:' + m.from + '→' + m.to + ':' + (m.label || '');
+    ps.forEach((p) => {
+      noteTargets.set(p, { key: 'participant:' + p.id, label: p.label || p.id });
+      noteKeysShown.add('participant:' + p.id);
+    });
+    ms.forEach((m, i) => {
+      if (!messageGeometries[i]) { return; }
+      noteTargets.set(m, { key: msgNoteKey(m), label: m.label });
+      noteKeysShown.add(msgNoteKey(m));
+    });
+    headerEls.forEach((g, i) => {
+      if (g) { g.addEventListener('dblclick', (e) => openNoteEditor(noteTargets.get(ps[i]), e.clientX, e.clientY)); }
+    });
+    messageGeometries.forEach((geom, i) => {
+      if (geom) { geom.group.addEventListener('dblclick', (e) => openNoteEditor(noteTargets.get(ms[i]), e.clientX, e.clientY)); }
+    });
+    const viewportG = svg.firstElementChild; // makeSvgViewport wrapped everything in one <g>
+    let seqNoteMarks = [];
+    const noteMarkAt = (x, y, target, text) => {
+      const g = svgEl('g', { class: 'noteMarkSvg' });
+      g.appendChild(svgEl('circle', { cx: x, cy: y, r: 7, fill: '#e5c07b' }));
+      g.appendChild(svgEl('text', { x, y: y + 3.5, 'text-anchor': 'middle', 'font-size': 9.5, fill: '#1e1e1e' }, '✎'));
+      g.addEventListener('mousemove', (e) => showItemTip({ tooltip: 'Your note: ' + text }, e.clientX, e.clientY, false));
+      g.addEventListener('mouseleave', hideTip);
+      g.addEventListener('click', (e) => { e.stopPropagation(); hideTip(); openNoteEditor(target, e.clientX, e.clientY); });
+      viewportG.appendChild(g);
+      seqNoteMarks.push(g);
+    };
+    const refreshSeqNotes = () => {
+      seqNoteMarks.forEach((g) => g.remove());
+      seqNoteMarks = [];
+      const notes = d._notes || {};
+      ps.forEach((p, i) => {
+        const t = noteTargets.get(p);
+        if (notes[t.key]) { noteMarkAt(c[i] + pw[i] / 2 - 2, participantTop[i] + 2, t, notes[t.key].text); }
+      });
+      ms.forEach((m, i) => {
+        const geom = messageGeometries[i];
+        const t = noteTargets.get(m);
+        if (!geom || !t || !notes[t.key]) { return; }
+        // just past the end of the message label
+        const x = geom.self ? c[geom.a] + 56 + geom.label.width + 12 : (c[geom.a] + c[geom.b]) / 2 + geom.label.width / 2 + 12;
+        noteMarkAt(x, geom.self ? geom.y + 11 : geom.y - 10, t, notes[t.key].text);
+      });
+    };
+    refreshSeqNotes();
+    noteOps = {
+      refresh: refreshSeqNotes,
+      reveal(key) {
+        const i = ms.findIndex((m, k) => messageGeometries[k] && msgNoteKey(m) === key);
+        if (i >= 0 && seqFocus) { seqFocus.focus(i); }
+      },
+    };
+
     // ---- search: messages, participants and frames
     const searchItems = [];
     ps.forEach((p, i) => searchItems.push({

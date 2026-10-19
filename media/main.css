@@ -249,6 +249,54 @@ svg .jb-current { filter: drop-shadow(0 0 5px #e5c07b) drop-shadow(0 0 2px #e5c0
 }
 #btnPurpose.on { background: rgba(86, 156, 214, .2); }
 
+/* ---- notes: editor popup, markers, side-panel section ---- */
+#noteEditor {
+  position: fixed; z-index: 80; width: 300px;
+  background: var(--vscode-editorWidget-background, #252526);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c); border-radius: 5px;
+  padding: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .45); font-size: 12px;
+}
+#noteEditor[hidden] { display: none; }
+#noteEditor .noteHead { font-weight: 600; margin-bottom: 6px; }
+#noteEditor textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; font: inherit; font-size: 12px;
+  background: var(--vscode-input-background, #3c3c3c); color: inherit;
+  border: 1px solid var(--vscode-focusBorder, #007fd4); border-radius: 2px; padding: 5px;
+}
+#noteEditor .noteBtns { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+#noteEditor .noteBtns button {
+  background: transparent; color: inherit; border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 3px; padding: 2px 9px; font-size: 11.5px; cursor: pointer;
+}
+#noteEditor .noteBtns .noteSave {
+  background: var(--vscode-button-background, #0e639c); color: var(--vscode-button-foreground, #fff); border-color: transparent;
+}
+#noteEditor .noteBtns button[hidden] { display: none; }
+#noteEditor .noteHint { margin-left: auto; font-size: 10.5px; opacity: .55; }
+.noteMark {
+  position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer;
+  width: 16px; height: 16px; line-height: 16px; border-radius: 8px; text-align: center;
+  background: #e5c07b; color: #1e1e1e; font-size: 10px;
+}
+.noteMark[hidden] { display: none; }
+svg .noteMarkSvg { cursor: pointer; }
+#detailNote { margin: 0 0 14px; }
+#detailNote .noteLabel, #detail .noteItem .noteLabel {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #e5c07b; margin-bottom: 3px;
+}
+#detailNote .noteBody, #detail .noteItem .noteBody {
+  white-space: pre-wrap; padding: 6px 8px; border-left: 3px solid #e5c07b; background: rgba(229, 192, 123, .08);
+  border-radius: 0 3px 3px 0; margin-bottom: 6px;
+}
+#detailNote .noteAdd {
+  background: transparent; border: 1px dashed var(--vscode-panel-border, #555); color: inherit; opacity: .8;
+  border-radius: 3px; padding: 2px 9px; font-size: 11px; cursor: pointer;
+}
+#detailNote .noteAdd:hover { opacity: 1; }
+#detail .noteItem { margin-bottom: 12px; cursor: pointer; }
+#detail .noteItem .noteLabel { color: inherit; text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; }
+#detail .noteItem .noteOrphan { font-size: 10.5px; opacity: .6; font-style: italic; }
+
 /* ---- component card: collapsible summary panel on the left ---- */
 #card {
   position: absolute; top: 34px; left: 0; bottom: 0;
