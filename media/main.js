@@ -404,6 +404,14 @@
       b.onclick = () => openRef(refs[0], refs); // primary jump = full highlight set
       actions.appendChild(b);
     }
+    {
+      const b = document.createElement('button');
+      b.className = 'askBtn';
+      b.textContent = 'ask Claude ▾';
+      b.title = 'Copy a question about this to paste into Claude Code';
+      b.onclick = (e) => { e.stopPropagation(); const r = b.getBoundingClientRect(); showAskMenu(item, label, kind, r.left - 120, r.bottom + 4); };
+      actions.appendChild(b);
+    }
     if (item.href) {
       const b = document.createElement('button');
       b.textContent = 'Open link';
@@ -434,6 +442,8 @@
     if (detail.hidden || detailLocked) { return; }
     if (e.button !== 0) { return; }                       // right-drag pan shouldn't close it
     if (detail.contains(e.target)) { return; }
+    // its popups (the ask menu, the note editor) count as part of it
+    if (askMenu.contains(e.target) || noteEditor.contains(e.target)) { return; }
     if (Date.now() - detailOpenedAt < 200) { return; }    // ignore the click that opened it
     closeDetail();
   });
@@ -574,6 +584,87 @@
     });
     detail.hidden = false;
   }
+
+  // ---------------------------------------------------------------- ask Claude
+  // Right-click an element (or "ask Claude" in its side panel) for a menu of
+  // questions. Each builds a prompt naming the diagram, the element, its code
+  // and the reader's note; the extension copies it for pasting into Claude Code.
+
+  const askMenu = document.createElement('div');
+  askMenu.id = 'askMenu';
+  askMenu.hidden = true;
+  document.body.appendChild(askMenu);
+  const svgItemMap = new WeakMap(); // svg element → { item, label, kind } (filled by bindSvgItem)
+
+  function askPrompt(action, item, label, kind) {
+    const d = currentDiagram || {};
+    const refs = getRefs(item);
+    const code = refs.length
+      ? 'Its code:\n' + refs.map((r) => '  ' + r.file + (refLoc(r) ? ':' + refLoc(r) : '') + (r.label ? ` (${r.label})` : '')).join('\n')
+      : 'It has no code reference yet.';
+    const note = noteFor(item);
+    const mine = note ? `\nMy note on it: "${note.text}"` : '';
+    const what = `the ${kind} "${label}" in jarbobo diagram "${d.title || ''}" (id ${d._id || '?'}${d._file ? ', file ' + d._file : ''})`;
+    const said = [item.tooltip && `tooltip: "${item.tooltip}"`, item.detail && `detail: "${item.detail}"`].filter(Boolean).join('; ');
+    switch (action) {
+      case 'explain':
+        return `Explain ${what}: what it is for, what comes in and what goes out, and how it fits into the rest of the diagram. Read the code first and lead with the purpose in plain words.\n${code}${mine}`;
+      case 'walk':
+        return `Walk me through the code of ${what}. Read it, then draw a sequence diagram of one message's trip through it as a code-reading companion (codebase-onboarding skill): one path, call sites and definitions as refs, and a component card.\n${code}${mine}`;
+      case 'hot':
+        return `Add a hot path to ${what}. Read its code, then edit the diagram (id ${d._id || '?'}) so this node has a hotPath: 3-8 steps in execution order, each one sentence with tight line ranges. Keep every other id unchanged.\n${code}`;
+      case 'check':
+        return `Check ${what} against the code${said ? ' — the diagram says ' + said : ''}. Open each referenced file and tell me what is wrong, outdated or only inferred, then fix the diagram by editing it (id ${d._id || '?'}), keeping ids stable.\n${code}${mine}`;
+      case 'note':
+        return `I left a note on ${what}: "${note ? note.text : ''}". Answer it using the code, and update the diagram (id ${d._id || '?'}) if that would make it clearer.\n${code}`;
+    }
+    return '';
+  }
+  function showAskMenu(item, label, kind, x, y) {
+    if (!item) { return; }
+    hideTip();
+    const note = noteFor(item);
+    const isComponent = kind === 'node' || kind === 'participant';
+    const options = [
+      ['explain', 'Explain this'],
+      isComponent && ['walk', 'Walk me through its code'],
+      kind === 'node' && !(item.hotPath && item.hotPath.length) && ['hot', 'Add a hot path'],
+      ['check', 'Is this right?'],
+      note && ['note', 'Answer my note'],
+    ].filter(Boolean);
+    askMenu.innerHTML = '';
+    askMenu.appendChild(Object.assign(document.createElement('div'), { className: 'askHead', textContent: 'Ask Claude about ' + label }));
+    options.forEach(([action, text]) => {
+      const b = Object.assign(document.createElement('button'), { textContent: text });
+      b.onclick = () => {
+        askMenu.hidden = true;
+        vscodeApi.postMessage({ type: 'askClaude', text: askPrompt(action, item, label, kind) });
+      };
+      askMenu.appendChild(b);
+    });
+    askMenu.appendChild(Object.assign(document.createElement('div'), { className: 'askHint', textContent: 'copies a prompt to paste into Claude Code' }));
+    askMenu.hidden = false;
+    const r = askMenu.getBoundingClientRect();
+    askMenu.style.left = Math.max(8, Math.min(x, window.innerWidth - r.width - 8)) + 'px';
+    askMenu.style.top = Math.max(40, Math.min(y, window.innerHeight - r.height - 8)) + 'px';
+  }
+  document.addEventListener('mousedown', (e) => { if (!askMenu.hidden && !askMenu.contains(e.target)) { askMenu.hidden = true; } }, true);
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { askMenu.hidden = true; } });
+
+  // A right-click that doesn't move opens the menu; a right-drag still pans.
+  // (Graphs use cytoscape's cxttap instead — see renderGraph.)
+  let rightDown = null;
+  stage.addEventListener('mousedown', (e) => { if (e.button === 2) { rightDown = { x: e.clientX, y: e.clientY, target: e.target }; } }, true);
+  window.addEventListener('mouseup', (e) => {
+    if (e.button !== 2 || !rightDown) { return; }
+    const still = Math.abs(e.clientX - rightDown.x) < 4 && Math.abs(e.clientY - rightDown.y) < 4;
+    let el = rightDown.target;
+    rightDown = null;
+    if (!still) { return; }
+    while (el && el !== stage && !svgItemMap.has(el)) { el = el.parentNode; }
+    const hit = el && svgItemMap.get(el);
+    if (hit) { showAskMenu(hit.item, hit.label, hit.kind, e.clientX, e.clientY); }
+  }, true);
 
   // ---------------------------------------------------------------- component card
   // A diagram's `card` — purpose, the whole component as pseudocode, I/O,
@@ -1105,6 +1196,7 @@
 
   function bindSvgItem(el, item, label, kind) {
     if (!item) { return; }
+    svgItemMap.set(el, { item, label, kind });
     // tag for the exporter (interactive HTML): maps this SVG element to its item
     const exIdx = registerExportItem(item, label, kind);
     if (exIdx >= 0) { el.setAttribute('data-jb', String(exIdx)); }
@@ -2231,6 +2323,11 @@
       const l = e.data('label');
       noteTargets.set(item, { key: edgeNoteKey(e), label: `${e.source().data('label')} → ${e.target().data('label')}${l ? ' (' + l + ')' : ''}` });
       noteKeysShown.add(edgeNoteKey(e));
+    });
+    cy.on('cxttap', 'node, edge', (ev) => {
+      if (ev.target.isNode() && ev.target.isParent()) { return; }
+      const oe = ev.originalEvent || {};
+      showAskMenu(ev.target.data('_item'), ev.target.data('label') || noteTargets.get(ev.target.data('_item'))?.label, ev.target.isNode() ? 'node' : 'edge', oe.clientX, oe.clientY);
     });
     cy.on('dbltap', 'node, edge', (ev) => {
       const target = noteTargets.get(ev.target.data('_item'));

@@ -436,11 +436,22 @@ async function readSnippet(r: { file?: string; line?: number; ranges?: RefRange[
 
 async function onWebviewMessage(
     panel: vscode.WebviewPanel,
-    msg: { type: string; file?: string; line?: number; ranges?: RefRange[]; anchor?: RefAnchor; highlights?: RefHighlight[]; url?: string; target?: string; follow?: boolean; notes?: Record<string, unknown>; positions?: unknown; id?: string; version?: number; direction?: string; reqId?: number; refs?: Array<{ file?: string; line?: number; ranges?: RefRange[]; _anchor?: RefAnchor }>; format?: string; ok?: boolean; data?: string; encoding?: string; error?: string },
+    msg: { type: string; file?: string; line?: number; ranges?: RefRange[]; anchor?: RefAnchor; highlights?: RefHighlight[]; url?: string; target?: string; follow?: boolean; notes?: Record<string, unknown>; text?: string; positions?: unknown; id?: string; version?: number; direction?: string; reqId?: number; refs?: Array<{ file?: string; line?: number; ranges?: RefRange[]; _anchor?: RefAnchor }>; format?: string; ok?: boolean; data?: string; encoding?: string; error?: string },
 ) {
     if (msg.type === 'ready') {
         const diagram = panels.get(panel);
         if (diagram) { panel.webview.postMessage({ type: 'render', diagram }); }
+    } else if (msg.type === 'askClaude' && msg.text) {
+        // "ask Claude" from a diagram element: jarbobo can't reach Claude
+        // itself (MCP only goes Claude → jarbobo), so hand the prompt over
+        // via the clipboard and offer to focus Claude Code's input
+        await vscode.env.clipboard.writeText(msg.text);
+        const choice = await vscode.window.showInformationMessage(
+            'Jarbobo: prompt copied — paste it into Claude Code (⌘V / Ctrl+V).', 'Open Claude Code');
+        if (choice) {
+            try { await vscode.commands.executeCommand('claude-vscode.focus'); }
+            catch { vscode.window.showWarningMessage('Jarbobo: could not open Claude Code here; paste the prompt wherever you run it.'); }
+        }
     } else if (msg.type === 'notes') {
         // the reader added, changed or deleted a note — notes are per diagram,
         // stored beside the versions

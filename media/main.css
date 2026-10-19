@@ -249,6 +249,26 @@ svg .jb-current { filter: drop-shadow(0 0 5px #e5c07b) drop-shadow(0 0 2px #e5c0
 }
 #btnPurpose.on { background: rgba(86, 156, 214, .2); }
 
+/* ---- ask Claude: right-click menu ---- */
+#askMenu {
+  position: fixed; z-index: 85; min-width: 220px;
+  background: var(--vscode-menu-background, #252526); color: var(--vscode-menu-foreground, inherit);
+  border: 1px solid var(--vscode-menu-border, #454545); border-radius: 5px;
+  padding: 4px; box-shadow: 0 4px 14px rgba(0, 0, 0, .45); font-size: 12px;
+  display: flex; flex-direction: column;
+}
+#askMenu[hidden] { display: none; }
+#askMenu .askHead { font-size: 10.5px; opacity: .6; padding: 3px 8px 5px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#askMenu button {
+  text-align: left; background: transparent; border: 0; color: inherit; font: inherit; font-size: 12px;
+  padding: 5px 10px; border-radius: 3px; cursor: pointer;
+}
+#askMenu button:hover { background: var(--vscode-menu-selectionBackground, #04395e); color: var(--vscode-menu-selectionForeground, #fff); }
+#askMenu .askHint { font-size: 10px; opacity: .5; padding: 5px 8px 2px; border-top: 1px solid var(--vscode-panel-border, #3c3c3c); margin-top: 3px; }
+#detail .actions button.askBtn {
+  background: transparent; color: inherit; border: 1px solid var(--vscode-panel-border, #555);
+}
+
 /* ---- notes: editor popup, markers, side-panel section ---- */
 #noteEditor {
   position: fixed; z-index: 80; width: 300px;
