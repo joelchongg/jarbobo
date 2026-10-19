@@ -3,7 +3,8 @@
 #
 #   ./setup.sh [install]      build the extension, install it into VS Code /
 #                             Cursor, register the MCP server with Claude Code
-#                             (and Cursor), link the onboarding skill
+#                             (and Cursor), link the onboarding skill, and
+#                             add *.jarbobo to your global git ignore
 #   ./setup.sh project [DIR]  prepare a codebase (default: current dir):
 #                             keep *.jarbobo diagrams out of `git status`
 #   ./setup.sh check          show what is installed and where
@@ -219,6 +220,32 @@ link_skill() {
   ok "$dst -> $src"
 }
 
+# Git's global ignore file: core.excludesFile if set, else the default that
+# git reads without any configuration.
+global_ignore_file() {
+  local f; f="$(git config --global core.excludesFile 2>/dev/null || true)"
+  f="${f/#\~/$HOME}"
+  echo "${f:-${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore}"
+}
+
+# Diagrams hold absolute paths, copies of code lines and your notes: keep
+# them out of EVERY repo, including ones `setup.sh project` never saw.
+ignore_globally() {
+  step "Keeping diagrams out of every git repo"
+  local f; f="$(global_ignore_file)"
+  if grep -qxF '*.jarbobo' "$f" 2>/dev/null; then
+    ok "*.jarbobo already in $f"
+    return
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '  [dry-run] append *.jarbobo to %s\n' "$f" >&2
+  else
+    mkdir -p "$(dirname "$f")"
+    printf '\n# jarbobo diagrams (paths, code snippets, personal notes)\n*.jarbobo\n' >> "$f"
+  fi
+  ok "*.jarbobo added to $f"
+}
+
 # Handshake with the server and list its tools; draws nothing.
 verify_server() {
   step "Checking the MCP server starts"
@@ -251,6 +278,7 @@ cmd_install() {
   install_extension
   register_mcp
   link_skill
+  ignore_globally
   verify_server
   step "Done"
   echo "  Restart Claude Code and reload your editor window."
@@ -318,6 +346,10 @@ cmd_check() {
     elif [ -f "$server" ]; then ok "Claude Code MCP: $server"
     else warn "Claude Code MCP points at a missing file: $server (rerun: setup.sh install)"; fi
   fi
+
+  local gi; gi="$(global_ignore_file)"
+  grep -qxF '*.jarbobo' "$gi" 2>/dev/null && ok "*.jarbobo ignored in every repo ($gi)" \
+    || warn "*.jarbobo not in your global git ignore; diagrams could be committed (setup.sh install adds it)"
 
   local skill="$HOME/.claude/skills/codebase-onboarding"
   if [ -L "$skill" ]; then ok "skill -> $(readlink "$skill")"

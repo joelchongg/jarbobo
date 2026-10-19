@@ -6,7 +6,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import {
     JARBOBO_EXT, walkDiagramFiles, readContainer, writeContainer, parseContainer,
-    serializeContainer, isContainerFile, stripMeta, type Container, type Note,
+    serializeContainer, isContainerFile, stripMeta, collectRefFiles, type Container, type Note,
 } from './storage.js';
 import { EXPORTERS, exportDiagram, suggestFilename, type Diagram, type ExportFormat } from './exporters.js';
 
@@ -377,9 +377,26 @@ const LANG_BY_EXT: Record<string, string> = {
 };
 const SNIPPET_MAX_LINES = 120;
 const SNIPPET_CONTEXT = 2; // context lines around each referenced range
+// Code previews (side panel, hot path, exports) read only files inside the
+// open workspace folders, and nothing in Restricted Mode: a diagram from
+// someone else must not be able to pull ~/.ssh/... into the panel or into an
+// exported HTML file. Opening a file yourself ("Go to source") is unaffected.
+function previewBlocked(file: string): string | undefined {
+    if (!vscode.workspace.isTrusted) { return 'not previewed: this workspace is in Restricted Mode'; }
+    let real: string;
+    try { real = fs.realpathSync(file); } catch { return undefined; } // missing file: the read reports it
+    const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => {
+        try { return fs.realpathSync(f.uri.fsPath); } catch { return f.uri.fsPath; }
+    });
+    if (roots.some((root) => real === root || real.startsWith(root + path.sep))) { return undefined; }
+    return 'not previewed: outside this workspace (use "Go to source" if you trust it)';
+}
+
 async function readSnippet(r: { file?: string; line?: number; ranges?: RefRange[]; _anchor?: RefAnchor }) {
     try {
         if (!r.file) { throw new Error('missing file'); }
+        const blocked = previewBlocked(r.file);
+        if (blocked) { throw new Error(blocked); }
         // openTextDocument (not fs) so unsaved edits are previewed too
         const doc = await vscode.workspace.openTextDocument(r.file);
         const all = doc.getText().split(/\r?\n/);
@@ -587,7 +604,20 @@ async function onWebviewMessage(
             msg.direction === 'forward' ? 'workbench.action.navigateForward' : 'workbench.action.navigateBack',
         );
     } else if (msg.type === 'openUrl' && msg.url) {
-        vscode.env.openExternal(vscode.Uri.parse(msg.url));
+        // diagrams can come from anyone: only web and mail links, and only
+        // after the user sees where it goes (no vscode://, app or file links)
+        let uri: vscode.Uri;
+        try { uri = vscode.Uri.parse(msg.url, true); } catch { return; }
+        if (!['http', 'https', 'mailto'].includes(uri.scheme)) {
+            vscode.window.showWarningMessage(`Jarbobo: blocked a "${uri.scheme}:" link. Diagrams can only open http, https and mailto links.`);
+            return;
+        }
+        if (!vscode.workspace.isTrusted) {
+            vscode.window.showWarningMessage('Jarbobo: links from diagrams are disabled in Restricted Mode.');
+            return;
+        }
+        const go = await vscode.window.showWarningMessage(`Open this link from the diagram?\n\n${uri.toString(true)}`, { modal: true }, 'Open');
+        if (go === 'Open') { vscode.env.openExternal(uri); }
     } else if (msg.type === 'export') {
         const diagram = diagramForPanel(panel);
         if (diagram) { void exportDiagramFlow(panel, diagram); }
@@ -635,6 +665,16 @@ async function exportDiagramFlow(panel: vscode.WebviewPanel, diagram: Record<str
     );
     if (!pick) { return; }
     const info = EXPORTERS.find(e => e.id === pick.fmt)!;
+    // exports leave the machine: say what code goes with them
+    const refFiles = collectRefFiles(diagram);
+    if (refFiles.length && (pick.fmt === 'html' || pick.fmt === 'json')) {
+        const names = refFiles.slice(0, 6).map((f) => path.basename(f)).join(', ') + (refFiles.length > 6 ? `, +${refFiles.length - 6} more` : '');
+        const what = pick.fmt === 'html'
+            ? `This interactive HTML embeds the referenced code from ${refFiles.length} file(s): ${names}. Anyone you send it to can read that code.`
+            : `This JSON contains absolute file paths and copies of referenced code lines from ${refFiles.length} file(s): ${names}.`;
+        const go = await vscode.window.showWarningMessage(`${what}\n\nOnly share it where that code is allowed to go.`, { modal: true }, 'Export');
+        if (go !== 'Export') { return; }
+    }
     let content: string | Buffer;
     try {
         if (info.kind === 'text') {
@@ -985,9 +1025,28 @@ function openOrUpdatePanel(d: Record<string, unknown>, focus: boolean) {
 
 // ---------------------------------------------------------------- HTTP bridge (MCP server -> extension)
 
+// The bridge only accepts the MCP server: a per-session random token from
+// port.json (readable only by this user), JSON only, and nothing a browser
+// sends (browsers always attach Origin to cross-site requests), so neither
+// another program nor a web page can push diagrams into the editor.
+const BRIDGE_TOKEN = crypto.randomBytes(32).toString('hex');
+function bridgeAuthorized(req: http.IncomingMessage): boolean {
+    if (req.headers.origin) { return false; }
+    if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) { return false; }
+    const got = Buffer.from(String(req.headers['x-jarbobo-token'] ?? ''));
+    const want = Buffer.from(BRIDGE_TOKEN);
+    return got.length === want.length && crypto.timingSafeEqual(got, want);
+}
+
 function startServer() {
     server = http.createServer((req, res) => {
         if (req.method === 'POST' && req.url === '/diagram') {
+            if (!bridgeAuthorized(req)) {
+                res.writeHead(403, { 'content-type': 'application/json' });
+                res.end('{"ok":false,"error":"forbidden"}');
+                req.resume();
+                return;
+            }
             let body = '';
             req.on('data', c => {
                 body += c;
@@ -1018,8 +1077,10 @@ function startServer() {
     server.listen(0, '127.0.0.1', () => {
         const addr = server!.address();
         if (addr && typeof addr === 'object') {
-            fs.mkdirSync(HOME, { recursive: true });
-            fs.writeFileSync(PORT_FILE, JSON.stringify({ port: addr.port, pid: process.pid, startedAt: new Date().toISOString() }));
+            fs.mkdirSync(HOME, { recursive: true, mode: 0o700 });
+            try { fs.chmodSync(HOME, 0o700); } catch { /* best-effort */ }
+            fs.writeFileSync(PORT_FILE, JSON.stringify({ port: addr.port, token: BRIDGE_TOKEN, pid: process.pid, startedAt: new Date().toISOString() }), { mode: 0o600 });
+            fs.chmodSync(PORT_FILE, 0o600); // writeFileSync's mode only applies to a new file
             bridgePort = addr.port;
             bridgeState = 'up';
             updateStatus();

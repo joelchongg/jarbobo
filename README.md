@@ -41,6 +41,19 @@
 - **Component card** — a diagram's `card` (purpose, the whole component as pseudocode, in/out,
   what to skip, reading order, check questions) in a collapsible panel on the left.
 
+**Security (for private repos)**
+
+- Code previews in the side panel, hot paths and exports only read files **inside the open
+  workspace**, and nothing in VS Code's Restricted Mode, so a diagram from someone else can't
+  pull in files like `~/.ssh/…`.
+- Links from diagrams open only as `http`, `https` or `mailto`, after a confirmation.
+- The localhost bridge needs a per-session token from `~/.jarbobo/port.json` (readable only by
+  you) and rejects anything a browser sends.
+- HTML and JSON exports warn before they carry code or file paths off the machine.
+- `setup.sh install` adds `*.jarbobo` to your global git ignore: diagrams hold absolute paths,
+  copies of code lines and your notes, and should never be committed by accident.
+- Diagram text returned to Claude is labelled as data, not instructions.
+
 **Everywhere**
 
 - **Notes** — double-click an element to write your own note; ✎ marks it. Notes survive redraws

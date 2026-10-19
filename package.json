@@ -17,6 +17,12 @@
     "Visualization"
   ],
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode, jarbobo shows diagrams but does not preview referenced code or open links from them."
+    }
+  },
   "activationEvents": [
     "onStartupFinished",
     "onCustomEditor:jarbobo.diagram"
