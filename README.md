@@ -159,6 +159,7 @@ your editor          reveals the line, respecting locked editor groups
 | pin the detail panel | 🔓 → 🔒 next to ✕ (click outside closes it when unlocked) |
 | open a code ref directly (skip panel) | **⌘-click** the element |
 | highlight a code ref while hovering | hold **⌃ Ctrl** |
+| search the diagram | **⌘F / Ctrl+F** (or **/**, or **search** in the titlebar): matches glow with their neighbours, the rest dims · **Enter / ⇧Enter** step through matches · **details** also searches the side-panel text · **Esc** closes |
 | hide or show purpose lines | **purpose** in the titlebar (graphs whose nodes have a `purpose` or groups a `description`) |
 | read the component card | the **card** panel on the left (sequence diagrams that have one): purpose, pseudocode, I/O, what to skip, reading order, check questions · click a pseudocode line to focus its step · **card** in the titlebar shows or hides it |
 | trace a sequence step by step | click a message, then **↑ / ↓** (or j / k): the rest dims, the side panel shows the step and its code opens beside the diagram, highlighted · **Esc** exits |

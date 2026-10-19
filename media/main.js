@@ -559,6 +559,104 @@
     btnPurpose.classList.toggle('on', purposeShown);
   }
 
+  // ---------------------------------------------------------------- search
+  // ⌘F / Ctrl+F (or "/") searches the diagram: matches light up with their
+  // neighbours, everything else dims; Enter / ⇧Enter step through them.
+  // Renderers that support it set searchOps = { run(q, opts) → count,
+  // show(i), clear() }; it is null for diagram types without search.
+
+  let searchOps = null;
+  let searchCount = 0, searchIndex = -1;
+  const searchBox = document.createElement('div');
+  searchBox.id = 'searchBox';
+  searchBox.hidden = true;
+  searchBox.innerHTML =
+    '<input id="searchInput" type="text" placeholder="Search names, notes, files…" spellcheck="false">'
+    + '<span id="searchCount"></span>'
+    + '<label title="Also search the longer explanations shown in the side panel"><input type="checkbox" id="searchDetail">details</label>'
+    + '<button id="searchClose" title="Close (Esc)">✕</button>';
+  document.body.appendChild(searchBox);
+  const searchInput = $('#searchInput'), searchCountEl = $('#searchCount'), searchDetail = $('#searchDetail');
+  const btnSearch = document.createElement('button');
+  btnSearch.className = 'tbtn';
+  btnSearch.id = 'btnSearch';
+  btnSearch.textContent = 'search';
+  btnSearch.title = 'Search this diagram (⌘F / Ctrl+F, or /)';
+  btnSearch.hidden = true;
+  if ($('#btnTarget')) { $('#btnTarget').before(btnSearch); }
+  btnSearch.addEventListener('click', () => openSearch());
+
+  // lowercase haystack for an element: its names plus tooltip and ref file
+  // names, and the detail text when asked for
+  function searchText(item, extra, withDetail) {
+    const parts = [...extra, item && item.tooltip, ...getRefs(item).map((r) => r.file.split('/').pop())];
+    if (withDetail && item) { parts.push(item.detail); }
+    return parts.filter(Boolean).join('\n').toLowerCase();
+  }
+  // every whitespace-separated term must appear
+  function matchesQuery(text, q) {
+    return q.toLowerCase().split(/\s+/).filter(Boolean).every((t) => text.includes(t));
+  }
+  // order hits so name matches come first, then purpose/description, then
+  // the rest (tooltips, file names, details), each in diagram order
+  function rankHits(hits, q, names, purposes) {
+    const score = (h) => matchesQuery(names(h).filter(Boolean).join('\n').toLowerCase(), q) ? 0
+      : matchesQuery(purposes(h).filter(Boolean).join('\n').toLowerCase(), q) ? 1 : 2;
+    return hits.map((h, i) => ({ h, i, s: score(h) })).sort((x, y) => x.s - y.s || x.i - y.i).map((x) => x.h);
+  }
+
+  function updateSearchCount() {
+    const q = searchInput.value.trim();
+    searchCountEl.textContent = !q ? '' : searchCount ? `${searchIndex + 1} of ${searchCount}` : 'no matches';
+    searchBox.classList.toggle('none', !!q && !searchCount);
+  }
+  function runSearch() {
+    if (!searchOps) { return; }
+    const q = searchInput.value.trim();
+    searchOps.clear();
+    searchCount = q ? searchOps.run(q, { detail: searchDetail.checked }) : 0;
+    searchIndex = searchCount ? 0 : -1;
+    if (searchCount) { searchOps.show(0); }
+    updateSearchCount();
+  }
+  function stepSearch(delta) {
+    if (!searchCount) { return; }
+    searchIndex = (searchIndex + delta + searchCount) % searchCount;
+    searchOps.show(searchIndex);
+    updateSearchCount();
+  }
+  function openSearch() {
+    if (!searchOps) { return; }
+    searchBox.hidden = false;
+    searchInput.focus();
+    searchInput.select();
+    runSearch();
+  }
+  function closeSearch() {
+    searchBox.hidden = true;
+    if (searchOps) { searchOps.clear(); }
+    searchCount = 0; searchIndex = -1;
+  }
+  searchInput.addEventListener('input', runSearch);
+  searchDetail.addEventListener('change', runSearch);
+  $('#searchClose').addEventListener('click', closeSearch);
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); stepSearch(e.shiftKey ? -1 : 1); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeSearch(); searchInput.blur(); }
+  });
+  window.addEventListener('keydown', (e) => {
+    if (!searchOps) { return; }
+    const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA');
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); openSearch(); }
+    else if (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); openSearch(); }
+  });
+  // after a re-render (drag, purpose toggle) re-apply an open search
+  function afterRenderSearch() {
+    btnSearch.hidden = !searchOps;
+    if (searchBox.hidden) { return; }
+    if (searchOps) { runSearch(); } else { closeSearch(); }
+  }
+
   // ---------------------------------------------------------------- titlebar buttons
 
   const btnTarget = $('#btnTarget');
@@ -1235,6 +1333,7 @@
     focusHint.hidden = true;
     renderCard(d);
     updatePurposeBtn(d);
+    searchOps = null;
     $('#title').textContent = d.title || '';
     $('#title').title = d.title || '';
     const diagramType = {
@@ -1255,6 +1354,7 @@
       stage.textContent = 'Render error: ' + (err && err.message || err);
       console.error(err);
     }
+    afterRenderSearch();
   }
 
   // ================================================================ GRAPH
@@ -1294,7 +1394,7 @@
     const els = [];
     (d.groups || []).forEach((g) => els.push({
       data: {
-        id: g.id, label: g.label || g.id, isGroup: 1, color: g.color || MUTED,
+        id: g.id, label: g.label || g.id, isGroup: 1, color: g.color || MUTED, gdesc: g.description || '',
         // the description sits between the label and the box (two lines at most)
         ...(showPurpose && g.description ? { descr: g.description, lmy: -4 - GROUP_DESC_H } : {}),
       },
@@ -1400,6 +1500,10 @@
         { selector: ':parent[descr]', style: { 'text-margin-y': 'data(lmy)' } },
         // group labels are short names; keep them on one line
         { selector: ':parent', style: { 'text-max-width': 1000 } },
+        // search: matches glow, everything unrelated fades
+        { selector: '.sFaded', style: { opacity: 0.13 } },
+        { selector: '.sMatch', style: { 'underlay-color': '#e5c07b', 'underlay-padding': 5, 'underlay-opacity': 0.28, 'underlay-shape': 'round-rectangle' } },
+        { selector: '.sCurrent', style: { 'underlay-opacity': 0.5, 'underlay-padding': 9 } },
         {
           selector: 'edge',
           style: {
@@ -1636,6 +1740,7 @@
       placePending = false;
       const z = cy.zoom();
       placed.forEach(({ n, el, group }) => {
+        el.style.opacity = n.hasClass('sFaded') ? '0.1' : '';
         el.style.fontSize = (PURPOSE_FONT_PX * z) + 'px';
         el.style.lineHeight = (PURPOSE_LINE * z) + 'px';
         if (group) {
@@ -1659,6 +1764,45 @@
       cy.on('render', () => { if (!placePending) { placePending = true; requestAnimationFrame(placeOverlay); } });
       cy.ready(placeOverlay);
     }
+
+    // ---- search -------------------------------------------------------------
+    let searchHits = [];
+    searchOps = {
+      run(q, o) {
+        searchHits = cy.elements().filter((el) => matchesQuery(searchText(el.data('_item'),
+          [el.data('label'), el.isNode() ? el.id() : '', el.data('purpose'), el.data('gdesc')], o.detail), q)).toArray();
+        if (!searchHits.length) { return 0; }
+        searchHits = rankHits(searchHits, q,
+          (el) => [el.data('label'), el.isNode() ? el.id() : ''],
+          (el) => [el.data('purpose'), el.data('gdesc')]);
+        // a match brings its neighbourhood: a node its edges and their other
+        // ends, an edge its two ends, a group its members
+        let lit = cy.collection();
+        searchHits.forEach((el) => {
+          lit = lit.union(el);
+          if (el.isNode() && el.isParent()) { lit = lit.union(el.descendants()); }
+          else if (el.isNode()) { lit = lit.union(el.connectedEdges()).union(el.connectedEdges().connectedNodes()); }
+          else { lit = lit.union(el.connectedNodes()); }
+        });
+        lit = lit.union(lit.nodes().ancestors());
+        cy.batch(() => {
+          cy.elements().not(lit).addClass('sFaded');
+          searchHits.forEach((el) => el.addClass('sMatch'));
+        });
+        return searchHits.length;
+      },
+      show(i) {
+        cy.elements('.sCurrent').removeClass('sCurrent');
+        const el = searchHits[i];
+        if (!el) { return; }
+        el.addClass('sCurrent');
+        cy.center(el);
+      },
+      clear() {
+        searchHits = [];
+        cy.elements().removeClass('sFaded sMatch sCurrent');
+      },
+    };
 
     activeOps = {
       pan(dx, dy) { cy.panBy({ x: dx, y: dy }); },
@@ -2290,18 +2434,24 @@
       if (sx < left + 40 || sx > right - 40) { tx = left + (right - left) * 0.45 - midX * st.k; }
       if (tx !== st.tx || ty !== st.ty) { activeOps.setState({ tx, ty, k: st.k }); }
     };
-    const focusMessage = (i, opts) => {
+    // everything that belongs with message i: its arrow, both participants,
+    // its note, enclosing frames and the activation bars it touches
+    const litForMessage = (i, lit) => {
       const geom = messageGeometries[i];
       if (!geom) { return; }
-      seqFocusState.index = i;
-      svg.classList.add('jb-focusing');
-      const lit = new Set([geom.group, headerEls[geom.a], headerEls[geom.b], lifelineEls[geom.a], lifelineEls[geom.b],
-        noteElements[i], noteLeaders[i]]);
+      [geom.group, headerEls[geom.a], headerEls[geom.b], lifelineEls[geom.a], lifelineEls[geom.b],
+        noteElements[i], noteLeaders[i]].forEach((el) => { if (el) { lit.add(el); } });
       frames.forEach((f, fi) => { if (frameElements[fi] && i >= f.from && i <= f.to) { lit.add(frameElements[fi].group); } });
       activationInfo.forEach((ai) => {
         if ((ai.p === geom.a || ai.p === geom.b) && ai.y0 <= ys[i] + 6 && ai.y1 >= ys[i] - 6) { lit.add(ai.el); }
       });
+    };
+    const applyLit = (lit) => {
+      svg.classList.add('jb-focusing');
       svg.querySelectorAll('.jb-dim').forEach((el) => el.classList.toggle('jb-lit', lit.has(el)));
+    };
+    const placeBand = (i) => {
+      const geom = messageGeometries[i];
       const x0 = Math.min(c[geom.a], c[geom.b]) - 14;
       const x1 = geom.self ? c[geom.a] + 56 + geom.label.width + 10 : Math.max(c[geom.a], c[geom.b]) + 14;
       band.setAttribute('x', String(x0));
@@ -2309,6 +2459,14 @@
       band.setAttribute('width', String(x1 - x0));
       band.setAttribute('height', String(geom.self ? 52 : 30));
       geom.group.insertBefore(band, geom.group.firstChild);
+    };
+    const focusMessage = (i, opts) => {
+      if (!messageGeometries[i]) { return; }
+      seqFocusState.index = i;
+      const lit = new Set();
+      litForMessage(i, lit);
+      applyLit(lit);
+      placeBand(i);
       focusHint.textContent = `step ${i + 1} of ${ms.length} · ↑ ↓ to step · Esc to exit`;
       focusHint.hidden = false;
       if (opts.step) {
@@ -2334,6 +2492,69 @@
       focus(i) { if (messageGeometries[i]) { focusMessage(i, { step: true }); } },
       clear: clearFocus,
     };
+    // ---- search: messages, participants and frames
+    const searchItems = [];
+    ps.forEach((p, i) => searchItems.push({
+      kind: 'participant', i, names: [p.label, p.id], purposes: [],
+      text: (o) => searchText(p, [p.label, p.id], o.detail),
+    }));
+    ms.forEach((m, i) => {
+      if (!messageGeometries[i]) { return; }
+      searchItems.push({
+        kind: 'message', i, names: [m.label], purposes: [m.note],
+        text: (o) => searchText(m, [m.label, m.note], o.detail),
+      });
+    });
+    frames.forEach((f, fi) => {
+      if (!frameElements[fi]) { return; }
+      searchItems.push({ kind: 'frame', i: fi, names: [f.label], purposes: [], text: () => [f.kind, f.label].join(' ').toLowerCase() });
+    });
+    let seqHits = [];
+    const hitEl = (h) => h.kind === 'participant' ? headerEls[h.i] : h.kind === 'message' ? messageGeometries[h.i].group : frameElements[h.i].group;
+    // the message to scroll to for a hit
+    const hitMessage = (h) => h.kind === 'message' ? h.i
+      : h.kind === 'frame' ? frames[h.i].from
+      : messageGeometries.findIndex((g) => g && (g.a === h.i || g.b === h.i));
+    searchOps = {
+      run(q, o) {
+        seqHits = searchItems.filter((it) => matchesQuery(it.text(o), q));
+        if (!seqHits.length) { return 0; }
+        seqHits = rankHits(seqHits, q, (h) => h.names, (h) => h.purposes);
+        const lit = new Set();
+        seqHits.forEach((h) => {
+          if (h.kind === 'message') { litForMessage(h.i, lit); }
+          else if (h.kind === 'frame') {
+            lit.add(frameElements[h.i].group);
+            for (let mi = frames[h.i].from; mi <= frames[h.i].to; mi++) { litForMessage(mi, lit); }
+          } else {
+            lit.add(headerEls[h.i]); lit.add(lifelineEls[h.i]);
+            messageGeometries.forEach((g, mi) => { if (g && (g.a === h.i || g.b === h.i)) { litForMessage(mi, lit); } });
+          }
+          hitEl(h).classList.add('jb-match');
+        });
+        applyLit(lit);
+        return seqHits.length;
+      },
+      show(i) {
+        svg.querySelectorAll('.jb-current').forEach((el) => el.classList.remove('jb-current'));
+        const h = seqHits[i];
+        if (!h) { return; }
+        hitEl(h).classList.add('jb-current');
+        const mi = hitMessage(h);
+        if (mi >= 0) {
+          keepInView(mi);
+          // ↑/↓ carry on from here
+          seqFocusState.index = mi;
+          if (h.kind === 'message') { placeBand(mi); } else { band.remove(); }
+        }
+      },
+      clear() {
+        seqHits = [];
+        svg.querySelectorAll('.jb-match, .jb-current').forEach((el) => el.classList.remove('jb-match', 'jb-current'));
+        clearFocus();
+      },
+    };
+
     if (seqFocusState.diagram === d && seqFocusState.index !== null) { focusMessage(seqFocusState.index, {}); }
     else { seqFocusState = { diagram: d, index: null }; }
   }

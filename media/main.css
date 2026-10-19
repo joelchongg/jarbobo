@@ -130,6 +130,30 @@ svg text { user-select: none; }
 .clickable { cursor: pointer; }
 .draggable { cursor: grab; }
 
+/* ---- search: a find box under the titlebar ---- */
+#searchBox {
+  position: absolute; top: 40px; right: 12px; z-index: 60;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--vscode-editorWidget-background, #252526);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 4px; padding: 4px 6px 4px 8px; font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+}
+#searchBox[hidden] { display: none; }
+#searchInput {
+  width: 220px; background: var(--vscode-input-background, #3c3c3c); color: inherit;
+  border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px; padding: 3px 6px; font-size: 12px;
+  outline: none;
+}
+#searchInput:focus { border-color: var(--vscode-focusBorder, #007fd4); }
+#searchBox.none #searchInput { border-color: var(--vscode-inputValidation-errorBorder, #be1100); }
+#searchCount { min-width: 62px; color: var(--vscode-descriptionForeground, #9d9d9d); font-size: 11px; }
+#searchBox label { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); cursor: pointer; }
+#searchClose { background: transparent; border: 0; color: inherit; opacity: .7; cursor: pointer; font-size: 12px; }
+#searchClose:hover { opacity: 1; }
+svg .jb-match { filter: drop-shadow(0 0 3px rgba(229, 192, 123, .9)); }
+svg .jb-current { filter: drop-shadow(0 0 5px #e5c07b) drop-shadow(0 0 2px #e5c07b); }
+
 /* ---- graph purpose lines and group descriptions (HTML over the canvas) ---- */
 .cyOverlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 5; }
 .cyPurpose, .cyDesc {
