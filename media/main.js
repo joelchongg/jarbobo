@@ -1463,12 +1463,29 @@
       if (m.note) { y += 8; }
       frames.forEach((f) => { if (f.to === i) { y += 12; } });
     });
-    const frameShift = (messageIndex) => frames.reduce((sum, f, frameIndex) =>
-      messageIndex >= f.from && messageIndex <= f.to ? sum + sequenceOffset('frame', frameIndex).y : sum, 0);
-    const ys = baseYs.map((value, i) => value + sequenceOffset('message', i).y + frameShift(i));
-    // Messages retain call-chain order. A dragged message is clamped between
-    // its neighbours; this pass also repairs hand-edited/legacy layouts.
+    // A dragged message or frame shifts everything after it by the same
+    // amount ("insert space"), so moving one part never squashes the rest.
+    const ownShift = baseYs.map((_, i) => sequenceOffset('message', i).y +
+      frames.reduce((sum, f, frameIndex) => f.from === i ? sum + sequenceOffset('frame', frameIndex).y : sum, 0));
+    let carried = 0;
+    const ys = baseYs.map((value, i) => { carried += ownShift[i]; return value + carried; });
+    // Messages retain call-chain order; this pass also repairs hand-edited
+    // and legacy layouts.
     for (let i = 1; i < ys.length; i++) { ys[i] = Math.max(ys[i], ys[i - 1] + 24); }
+
+    // Frame nesting. Frames that start (or end) at the same message stack
+    // their title tags (or bottom edges) instead of drawing on top of each
+    // other: the outer frame's tag sits one band above the inner one's.
+    const FRAME_BAND = 22;
+    const frameValid = (f) => f.from >= 0 && f.to < ms.length && f.from <= f.to;
+    const frameContains = (o, f) => o !== f && o.from <= f.from && o.to >= f.to &&
+      (o.to - o.from > f.to - f.from || frames.indexOf(o) < frames.indexOf(f));
+    const frameInnerLevels = frames.map(() => 0);
+    const innerLevels = (f) => Math.max(0, ...frames.filter((o) => frameValid(o) && frameContains(f, o)).map((o) => 1 + innerLevels(o)));
+    frames.forEach((f, i) => { frameInnerLevels[i] = frameValid(f) ? innerLevels(f) : 0; });
+    const frameStartRank = frames.map((f) => frames.filter((o) => frameValid(o) && o.from === f.from && frameContains(f, o)).length);
+    const frameEndRank = frames.map((f) => frames.filter((o) => frameValid(o) && o.to === f.to && frameContains(f, o)).length);
+    const frameTop = (frameIndex) => ys[frames[frameIndex].from] - 46 - FRAME_BAND * frameStartRank[frameIndex];
     const firstActivation = ys.length ? Math.min(...ys) : lifeTop + 38;
     // Lifeline headers may move upward freely, but cannot be placed below the
     // first edge/activation in the sequence.
@@ -1477,11 +1494,33 @@
       firstActivation - boxH - 8,
     ));
     const participantLifeTop = participantTop.map((v) => v + boxH);
-    const endY = Math.max(y + 10, ...ys.map((v) => v + 60));
+    // Notes live in their own column right of the last lifeline (and of any
+    // frame), so they never cover arrows. They wrap, and stack downward when
+    // a note is taller than the gap to the next one.
+    const NOTE_MAX_W = 260, NOTE_LINE = 14;
+    const last = ps.length - 1;
+    const selfLabelRight = ms.reduce((r, m) => {
+      const a = idx[m.from];
+      return a !== undefined && (m.from === m.to || m.kind === 'self') ? Math.max(r, c[a] + 56 + tw(m.label, SMALL_FONT)) : r;
+    }, -Infinity);
+    const noteX = last >= 0
+      ? Math.max(c[last] + Math.max(pw[last] / 2, 74 + 7 * Math.max(0, ...frameInnerLevels)), selfLabelRight) + 24
+      : 40;
+    const noteBoxes = [];
+    let noteBottom = -Infinity;
+    ms.forEach((m, i) => {
+      if (!m.note) { return; }
+      const lines = wrapText(m.note, NOTE_MAX_W, SMALL_FONT);
+      const w = Math.max(...lines.map((l) => tw(l, SMALL_FONT))) + 26;
+      const h = 12 + NOTE_LINE * lines.length;
+      const top = Math.max(ys[i] - 12, noteBottom + 6);
+      noteBoxes[i] = { lines, w, h, top };
+      noteBottom = top + h;
+    });
+    const endY = Math.max(y + 10, ...ys.map((v) => v + 60), noteBottom + 10);
 
     let width = (c.length ? c[c.length - 1] + pw[pw.length - 1] / 2 + 30 : 160);
-    const noteW = ms.reduce((w, m) => Math.max(w, m.note ? tw(m.note, SMALL_FONT) + 24 : 0), 0);
-    if (noteW) { width += noteW + 20; }
+    noteBoxes.forEach((nb) => { if (nb) { width = Math.max(width, noteX + nb.w + 20); } });
     const height = endY + 26;
 
     const svg = svgEl('svg', { width, height, viewBox: `0 0 ${width} ${height}` });
@@ -1524,7 +1563,7 @@
         a.rect.setAttribute('height', String(Math.max(6, a.y1 - a.y0)));
       });
       (activationEnds[messageIndex] || []).forEach((a) => {
-        a.y1 = y + 5;
+        a.y1 = y + a.endPad;
         a.rect.setAttribute('height', String(Math.max(6, a.y1 - a.y0)));
       });
     };
@@ -1587,17 +1626,16 @@
             const current = ys[index];
             // The first edge may rise almost to the participant headers; later
             // edges retain the call-chain spacing constraint.
+            // Moving down is unbounded: later messages shift with it on drop.
             const prev = index ? ys[index - 1] + 24 : Math.min(...participantLifeTop) + 8;
-            const next = index + 1 < ys.length ? ys[index + 1] - 24 : Infinity;
-            const desired = Math.max(prev, Math.min(next, current + dy));
+            const desired = Math.max(prev, current + dy);
             dy = before.y + (desired - current);
           } else if (kind === 'frame') {
             dx = before.x;
             const f = frames[index];
             const prev = f.from ? ys[f.from - 1] + 10 : lifeTop + 8;
-            const next = f.to + 1 < ys.length ? ys[f.to + 1] - 42 : Infinity;
-            const desired = Math.max(prev, Math.min(next, ys[f.from] - 46 + (before.y + dy - sequenceOffset('frame', index).y)));
-            dy = before.y + (desired - (ys[f.from] - 46));
+            const desired = Math.max(prev, frameTop(index) + (before.y + dy - sequenceOffset('frame', index).y));
+            dy = before.y + (desired - frameTop(index));
             const frameDelta = dy - before.y;
             for (let mi = f.from; mi <= f.to; mi++) {
               const geom = messageGeometries[mi];
@@ -1679,9 +1717,54 @@
       svg.appendChild(line);
     });
 
-    // frames (under messages)
-    frames.forEach((f) => {
-      if (f.from < 0 || f.to >= ms.length || f.from > f.to) { return; }
+    // activations: a sync call starts one on the target, a reply ends it
+    const stacks = ps.map(() => []);
+    const actRects = [];
+    const isSyncCall = (m) => {
+      const a = idx[m.from], b = idx[m.to];
+      return a !== undefined && b !== undefined && a !== b && (m.kind || 'sync') === 'sync';
+    };
+    ms.forEach((m, i) => {
+      const a = idx[m.from], b = idx[m.to];
+      if (a === undefined || b === undefined) { return; }
+      const kind = m.kind || (a === b ? 'self' : 'sync');
+      if (isSyncCall(m)) { stacks[b].push({ y0: ys[i] - 5, startMessage: i }); }
+      if (kind === 'reply' && stacks[a].length) {
+        const start = stacks[a].pop();
+        actRects.push({ p: a, y0: start.y0, y1: ys[i] + 5, startMessage: start.startMessage, endMessage: i, endPad: 5 });
+      }
+    });
+    // A call without a reply: the callee is busy until the last message it
+    // sends before it is called again. One that sends nothing (a hook that
+    // just returns) gets a short bar.
+    stacks.forEach((st, p) => st.forEach((start) => {
+      let end = start.startMessage;
+      for (let j = start.startMessage + 1; j < ms.length; j++) {
+        if (idx[ms[j].to] === p && isSyncCall(ms[j])) { break; }
+        if (idx[ms[j].from] === p) { end = j; }
+      }
+      const endsOnSelf = end !== start.startMessage && ms[end].from === ms[end].to;
+      const endPad = end === start.startMessage ? 16 : endsOnSelf ? 27 : 5;
+      actRects.push({ p, y0: start.y0, y1: ys[end] + endPad, startMessage: start.startMessage, endMessage: end, endPad });
+    }));
+    actRects.forEach((r) => {
+      const activation = svgEl('rect', {
+        // Y is owned by the message timeline; only the participant's X is
+        // applied here.  This keeps activation starts aligned with arrows
+        // when the lifeline header is moved vertically.
+        x: c[r.p] - 4, y: r.y0, width: 8, height: Math.max(6, r.y1 - r.y0),
+        fill: ACCENT, 'fill-opacity': 0.35, stroke: ACCENT, 'stroke-width': 1,
+      });
+      activationEls[r.p].push(activation);
+      const anchor = { rect: activation, y0: r.y0, y1: r.y1, endPad: r.endPad };
+      if (r.startMessage !== undefined) { (activationStarts[r.startMessage] ||= []).push(anchor); }
+      if (r.endMessage !== undefined) { (activationEnds[r.endMessage] ||= []).push(anchor); }
+      svg.appendChild(activation);
+    });
+
+    // frames (under messages, over activation bars so their tags stay readable)
+    frames.forEach((f, frameIndex) => {
+      if (!frameValid(f)) { return; }
       let minC = Infinity, maxC = -Infinity;
       for (let i = f.from; i <= f.to; i++) {
         const a = idx[ms[i].from], b = idx[ms[i].to];
@@ -1689,9 +1772,13 @@
         if (b !== undefined) { minC = Math.min(minC, c[b]); maxC = Math.max(maxC, c[b]); }
       }
       if (!isFinite(minC)) { return; }
-      const x0 = minC - 40, x1 = maxC + 44 + (ms.slice(f.from, f.to + 1).some(m => m.from === m.to) ? 30 : 0);
+      // Outer frames grow by one step per level nested inside them, so
+      // borders never coincide and inner frames keep their clearance.
+      const grow = 7 * frameInnerLevels[frameIndex];
+      const x0 = Math.max(4, minC - 40 - grow), x1 = maxC + 44 + (ms.slice(f.from, f.to + 1).some(m => m.from === m.to) ? 30 : 0) + grow;
       // Leave a clear title band above the first message label.
-      const y0 = ys[f.from] - 46, y1 = ys[f.to] + (ms[f.to].from === ms[f.to].to ? 34 : 14);
+      const y0 = frameTop(frameIndex);
+      const y1 = ys[f.to] + (ms[f.to].from === ms[f.to].to ? 34 : 14) + 10 * frameEndRank[frameIndex];
       const frameGroup = svgEl('g', {});
       const frameRect = svgEl('rect', {
         x: x0, y: y0, width: x1 - x0, height: y1 - y0,
@@ -1710,39 +1797,9 @@
         'font-family': "-apple-system, sans-serif",
       }, tag);
       frameGroup.appendChild(frameText);
-      const frameIndex = frames.indexOf(f);
       frameElements[frameIndex] = { group: frameGroup, rect: frameRect, path: framePath, text: frameText, x0, x1, y0, y1, tagW };
       bindSequenceDrag(frameGroup, sequenceKey('frame', frameIndex), 'frame', frameIndex);
       svg.appendChild(frameGroup);
-    });
-
-    // activations: auto (sync starts on target, reply ends on sender) + flush at end
-    const stacks = ps.map(() => []);
-    const actRects = [];
-    ms.forEach((m, i) => {
-      const a = idx[m.from], b = idx[m.to];
-      if (a === undefined || b === undefined) { return; }
-      const kind = m.kind || (a === b ? 'self' : 'sync');
-      if (kind === 'sync' && a !== b) { stacks[b].push({ y0: ys[i] - 5, startMessage: i }); }
-      if (kind === 'reply' && stacks[a].length) {
-        const start = stacks[a].pop();
-        actRects.push({ p: a, y0: start.y0, y1: ys[i] + 5, startMessage: start.startMessage, endMessage: i });
-      }
-    });
-    stacks.forEach((st, p) => st.forEach((start) => actRects.push({ p, y0: start.y0, y1: endY - 8, startMessage: start.startMessage })));
-    actRects.forEach((r) => {
-      const activation = svgEl('rect', {
-        // Y is owned by the message timeline; only the participant's X is
-        // applied here.  This keeps activation starts aligned with arrows
-        // when the lifeline header is moved vertically.
-        x: c[r.p] - 4, y: r.y0, width: 8, height: Math.max(6, r.y1 - r.y0),
-        fill: ACCENT, 'fill-opacity': 0.35, stroke: ACCENT, 'stroke-width': 1,
-      });
-      activationEls[r.p].push(activation);
-      const anchor = { rect: activation, y0: r.y0, y1: r.y1 };
-      if (r.startMessage !== undefined) { (activationStarts[r.startMessage] ||= []).push(anchor); }
-      if (r.endMessage !== undefined) { (activationEnds[r.endMessage] ||= []).push(anchor); }
-      svg.appendChild(activation);
     });
 
     // participant headers
@@ -1828,20 +1885,29 @@
       bindSequenceDrag(g, sequenceKey('message', i), 'message', i);
       svg.appendChild(g);
 
-      if (m.note) {
+      if (m.note && noteBoxes[i]) {
         const noteOffset = sequenceOffset('note', i);
-        const nx = Math.max(c[a], c[b]) + 36 + noteOffset.x;
-        const ny = yy + noteOffset.y;
-        const nw = tw(m.note, SMALL_FONT) + 18;
+        const nb = noteBoxes[i];
+        const nx = noteX + noteOffset.x;
+        const top = nb.top + noteOffset.y;
+        const nw = nb.w;
+        // dotted leader from the message's right end to the note
+        const fromX = kind === 'self' || a === b ? c[a] + 48 : Math.max(c[a], c[b]);
+        svg.appendChild(svgEl('path', {
+          d: `M${fromX + 6} ${yy} H${nx - 10} L${nx} ${top + nb.h / 2}`,
+          fill: 'none', stroke: '#b8963e', 'stroke-width': 1, 'stroke-dasharray': '2 3', 'stroke-opacity': 0.7,
+        }));
         const ng = svgEl('g', {});
         ng.appendChild(svgEl('path', {
-          d: `M${nx} ${ny - 12} h${nw - 8} l8 8 v18 h${-nw} v-26 z M${nx + nw - 8} ${ny - 12} v8 h8`,
+          d: `M${nx} ${top} h${nw - 8} l8 8 v${nb.h - 8} h${-nw} z M${nx + nw - 8} ${top} v8 h8`,
           fill: 'rgba(255, 214, 102, 0.10)', stroke: '#b8963e', 'stroke-width': 1,
         }));
-        ng.appendChild(svgEl('text', {
-          x: nx + 8, y: ny + 5, fill: FG, 'font-size': 11.5,
-          'font-family': "-apple-system, sans-serif",
-        }, m.note));
+        nb.lines.forEach((line, li) => {
+          ng.appendChild(svgEl('text', {
+            x: nx + 8, y: top + 17 + NOTE_LINE * li, fill: FG, 'font-size': 11.5,
+            'font-family': "-apple-system, sans-serif",
+          }, line));
+        });
         bindSequenceDrag(ng, sequenceKey('note', i), 'note', i);
         noteElements[i] = ng;
         svg.appendChild(ng);
