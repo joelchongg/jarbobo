@@ -407,6 +407,13 @@ const server = new McpServer(
             '• SHARED STATE: nodes = the writing code and the reading code (writer refs = the modification sites, reader refs = the read sites); edges writer→reader (data-flow direction suggested); the edge ref = the DECLARATION of the shared variable; labels semantic. ' +
             '• PUB-SUB: nodes = publishing code → subscribing code (subscriber refs = the callback and/or its registration, or the polling site); the edge ref = the queue/topic declaration; suggested arrows publisher→subscriber. ' +
             '• RESOURCE LIFECYCLE: nodes = resources (ref = the resource\'s type/declaration) and the code that owns them; edges = acquire/release/transfer, each edge ref\'ing the site(s) where it happens. ' +
+            'DIAGRAMS TEACH, NOT JUST MAP: assume the reader may be new to the codebase and its domain. ' +
+            '• PURPOSE FIRST: the first clause of every tooltip says what the element is FOR in this diagram\'s story, in plain words a newcomer would understand, before naming the mechanism ("decides which transactions go in the block — ranks by fee per compute unit", not "fd_pack_schedule_next_microblock wrapper"). ' +
+            '• CONCEPT BEFORE CODE: when the user is new to a codebase, draw what the system is trying to do (its jobs, grouped by when they run) before any code-level diagram, and offer to drill into code after. Name groups by when they run and what they do, not by topic. ' +
+            '• JARGON: domain names alone mean nothing to a newcomer — label as "pack (block builder)", not "pack", and define each domain term in `detail` the first time it appears. ' +
+            '• READ BEFORE DRAWING: only attach a `file`+`line` you opened in this session. If an element is inferred from names or nearby code rather than read, say so in its `detail`. ' +
+            '• OFFER A NEXT STEP: after drawing, suggest two or three follow-up diagrams (zoom into one node, trace one message, show the failure path). ' +
+            'SEQUENCE DIAGRAMS stay readable only when small: ONE path per diagram (draw a second diagram for a second path), at most ~7 participants, message labels under ~40 characters, at most two levels of nested frames, end activations with `reply` messages, and put long explanations in `detail` rather than notes. ' +
             'Prefer two or three focused diagrams over one overloaded one.',
     },
 );
