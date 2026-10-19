@@ -671,6 +671,26 @@
     try { localStorage.setItem(layerKey(d), JSON.stringify([...hidden])); } catch { /* storage unavailable */ }
   }
 
+  // ---------------------------------------------------------------- study paths
+  // A graph's `paths`: a legend of named routes. Picking one dims the rest,
+  // numbers its steps and lets ↑/↓ walk them. pathOps is set by renderGraph.
+
+  const pathLegend = document.createElement('div');
+  pathLegend.id = 'pathLegend';
+  pathLegend.hidden = true;
+  document.body.appendChild(pathLegend);
+  let pathOps = null; // { step(delta), clear(), active() }
+  window.addEventListener('keydown', (e) => {
+    if (!pathOps || !pathOps.active() || e.metaKey || e.ctrlKey || e.altKey) { return; }
+    const tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') { return; }
+    // an open hot path tab owns the arrow keys
+    if (hotState && !detail.hidden && !detailHot.hidden) { return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'j') { e.preventDefault(); pathOps.step(1); }
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'k') { e.preventDefault(); pathOps.step(-1); }
+    else if (e.key === 'Escape') { pathOps.clear(); }
+  });
+
   // ---------------------------------------------------------------- search
   // ⌘F / Ctrl+F (or "/") searches the diagram: matches light up with their
   // neighbours, everything else dims; Enter / ⇧Enter step through them.
@@ -1447,6 +1467,8 @@
     updatePurposeBtn(d);
     searchOps = null;
     edgeLegend.hidden = true;
+    pathLegend.hidden = true;
+    pathOps = null;
     $('#title').textContent = d.title || '';
     $('#title').title = d.title || '';
     const diagramType = {
@@ -1613,6 +1635,9 @@
         { selector: ':parent[descr]', style: { 'text-margin-y': 'data(lmy)' } },
         // group labels are short names; keep them on one line
         { selector: ':parent', style: { 'text-max-width': 1000 } },
+        // study path: everything off the chosen path fades
+        { selector: '.pFaded', style: { opacity: 0.13 } },
+        { selector: 'node.pCurrent', style: { 'underlay-color': 'data(pcolor)', 'underlay-padding': 8, 'underlay-opacity': 0.45, 'underlay-shape': 'round-rectangle' } },
         // edge layers switched off in the legend
         { selector: '.kHidden', style: { display: 'none' } },
         // search: matches glow, everything unrelated fades
@@ -1874,6 +1899,10 @@
           el.style.transform = `translate(${p.x - w / 2}px, ${top}px)`;
         }
       });
+      stepBadges.forEach(({ n, el }) => {
+        const bb = n.renderedBoundingBox({ includeLabels: false });
+        el.style.transform = `translate(${bb.x1 - 9}px, ${bb.y1 - 9}px)`;
+      });
       badges.forEach(({ n, el }) => {
         if (el.hidden) { return; }
         const bb = n.renderedBoundingBox({ includeLabels: false });
@@ -1940,7 +1969,106 @@
       applyLayers();
     }
 
-    if (placed.length || badges.length) {
+    // ---- study paths ----------------------------------------------------------
+    const paths = (d.paths || []).filter((pth) => (pth.steps || []).every((id) => cy.getElementById(id).nonempty()));
+    const stepBadges = []; // { n, el } for the active path, one per node
+    let activePath = -1, pathAt = -1;
+    const pathColor = (pth, k) => pth.color || ['#e5904a', '#3fb27f', '#c678dd', '#56b6c2'][k % 4];
+    const clearPath = () => {
+      activePath = -1; pathAt = -1;
+      cy.batch(() => {
+        cy.elements().removeClass('pFaded pCurrent');
+        cy.edges('.pEdge').removeStyle().removeClass('pEdge');
+      });
+      stepBadges.splice(0).forEach(({ el }) => el.remove());
+      pathLegend.querySelectorAll('.pathRow').forEach((r) => r.classList.remove('on'));
+      const nav = pathLegend.querySelector('.pathNav');
+      if (nav) { nav.hidden = true; }
+    };
+    const showPath = (k) => {
+      clearPath();
+      const pth = paths[k];
+      const color = pathColor(pth, k);
+      activePath = k;
+      const nodes = pth.steps.map((id) => cy.getElementById(id));
+      let lit = cy.collection();
+      nodes.forEach((n) => { lit = lit.union(n); });
+      for (let i = 0; i + 1 < nodes.length; i++) {
+        const between = nodes[i].edgesWith(nodes[i + 1]).not('.kHidden');
+        lit = lit.union(between);
+        between.addClass('pEdge').style({ 'line-color': color, 'target-arrow-color': color, width: 3.2, opacity: 1 });
+      }
+      lit = lit.union(lit.nodes().ancestors());
+      cy.batch(() => {
+        cy.elements().not(lit).addClass('pFaded');
+        nodes.forEach((n) => n.data('pcolor', color));
+      });
+      // one numbered badge per node ("2, 5" when the path passes twice)
+      const numbers = new Map();
+      pth.steps.forEach((id, i) => numbers.set(id, [...(numbers.get(id) || []), i + 1]));
+      numbers.forEach((nums, id) => {
+        const el = document.createElement('div');
+        el.className = 'cyStep';
+        el.style.background = color;
+        el.textContent = nums.join(', ');
+        overlay.appendChild(el);
+        stepBadges.push({ n: cy.getElementById(id), el });
+      });
+      pathLegend.querySelectorAll('.pathRow').forEach((r, i) => r.classList.toggle('on', i === k));
+      const nav = pathLegend.querySelector('.pathNav');
+      nav.hidden = false;
+      nav.querySelector('.pathCounter').textContent = `${pth.steps.length} steps · ↑ ↓ to walk`;
+      placeOverlay();
+    };
+    const goStep = (i) => {
+      const pth = paths[activePath];
+      if (!pth || i < 0 || i >= pth.steps.length) { return; }
+      pathAt = i;
+      const n = cy.getElementById(pth.steps[i]);
+      cy.nodes('.pCurrent').removeClass('pCurrent');
+      n.addClass('pCurrent');
+      pathLegend.querySelector('.pathCounter').textContent = `step ${i + 1} of ${pth.steps.length}`;
+      interact(n.data('_item'), n.data('label'), 'node', {});
+      // centre it in the part of the canvas the side panel leaves visible
+      const z = cy.zoom(), p = n.position();
+      const visibleW = holder.clientWidth - (detail.hidden ? 0 : detail.offsetWidth);
+      cy.pan({ x: visibleW * 0.45 - p.x * z, y: holder.clientHeight * 0.45 - p.y * z });
+    };
+    if (paths.length) {
+      pathLegend.innerHTML = '';
+      pathLegend.appendChild(Object.assign(document.createElement('div'), { className: 'legendTitle', textContent: 'study paths' }));
+      paths.forEach((pth, k) => {
+        const row = document.createElement('div');
+        row.className = 'pathRow';
+        row.title = 'Show only this path (click again to show everything)';
+        const sw = Object.assign(document.createElement('span'), { className: 'pathSwatch' });
+        sw.style.background = pathColor(pth, k);
+        row.append(sw, document.createTextNode(pth.name + ' '));
+        row.appendChild(Object.assign(document.createElement('span'), { className: 'legendCount', textContent: String(pth.steps.length) }));
+        if (pth.first) { row.appendChild(Object.assign(document.createElement('span'), { className: 'pathFirst', textContent: 'start here' })); }
+        row.onclick = () => { if (activePath === k) { clearPath(); } else { showPath(k); } };
+        pathLegend.appendChild(row);
+      });
+      const nav = document.createElement('div');
+      nav.className = 'pathNav';
+      nav.hidden = true;
+      const prev = Object.assign(document.createElement('button'), { textContent: '◀', title: 'Previous step (↑)' });
+      const next = Object.assign(document.createElement('button'), { textContent: '▶', title: 'Next step (↓)' });
+      prev.onclick = () => goStep(pathAt <= 0 ? 0 : pathAt - 1);
+      next.onclick = () => goStep(pathAt + 1);
+      nav.append(prev, Object.assign(document.createElement('span'), { className: 'pathCounter' }), next);
+      pathLegend.appendChild(nav);
+      pathLegend.hidden = false;
+      // sit above the edge legend when both are shown
+      pathLegend.style.bottom = edgeLegend.hidden ? '10px' : (edgeLegend.offsetHeight + 20) + 'px';
+      pathOps = {
+        active: () => activePath >= 0,
+        step: (delta) => goStep(pathAt < 0 ? 0 : pathAt + delta),
+        clear: clearPath,
+      };
+    }
+
+    if (placed.length || badges.length || paths.length) {
       cy.on('render', () => { if (!placePending) { placePending = true; requestAnimationFrame(placeOverlay); } });
       cy.ready(placeOverlay);
     }

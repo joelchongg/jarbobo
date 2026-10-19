@@ -199,9 +199,10 @@ to it.
 - Node `label` = the name; node `purpose` = what it is for, under ~60
   characters (`chooses which transactions go in the block`). The purpose
   shows as a smaller line under the name, so don't repeat it in the label.
-- Highlight one or two study paths: give their nodes and edges a strong
-  colour and number the edge labels `1 · …`, `2 · …`. Everything else stays
-  default or dotted.
+- Mark one or two study paths with `paths` (name, colour, node ids in order),
+  and set `first` on the one to start with. The learner picks a path from the
+  legend to see it alone, numbered, and walks it with the arrow keys; don't
+  number edge labels by hand.
 - Give every edge a `kind` and list the kinds in `edgeKinds`: the story
   edges (`data`, the numbered study paths) shown, bookkeeping (request/reply
   pairs, status broadcasts, signing, acks, startup wiring) `hidden`. The

@@ -544,6 +544,12 @@ server.registerTool(
                 label: z.string().optional().describe('Legend text, e.g. "data flow (the story)". Defaults to the kind.'),
                 hidden: z.boolean().optional().describe('Start with this layer hidden. Hide bookkeeping (replies, status, startup wiring) so the first look shows only the edges that tell the story.'),
             })).optional().describe('Legend order and starting visibility for edge kinds. Kinds used on edges but not listed here are shown, after the listed ones.'),
+            paths: z.array(z.object({
+                name: z.string().describe('What the path follows, e.g. "a user transaction becomes our block".'),
+                color: z.string().optional().describe('Hex color for this path\'s edges and step badges.'),
+                steps: z.array(z.string()).min(2).describe('Node ids IN ORDER. Edges between consecutive steps are highlighted.'),
+                first: z.boolean().optional().describe('Mark the ONE path a newcomer should study first; the legend tags it "start here".'),
+            })).optional().describe('STUDY PATHS: named routes through the graph. The viewer lists them in a legend; picking one dims everything else, numbers its steps and lets the reader walk them with the arrow keys, opening each node\'s side panel (and its hot path). Prefer this over colouring and numbering edges by hand.'),
         },
     },
     async (args) => {
@@ -558,6 +564,12 @@ server.registerTool(
         for (const n of spec.nodes) {
             if (n.group && !groupIds.has(n.group)) { problems.push(`node "${n.id}" references unknown group "${n.group}"`); }
         }
+        for (const pth of spec.paths ?? []) {
+            for (const st of pth.steps) {
+                if (!nodeIds.has(st)) { problems.push(`path "${pth.name}" has unknown node id "${st}"`); }
+            }
+        }
+        if ((spec.paths ?? []).filter(pth => pth.first).length > 1) { problems.push('only one path can be marked first'); }
         const usedKinds = new Set((spec.edges ?? []).map(e => e.kind).filter(Boolean));
         for (const k of spec.edgeKinds ?? []) {
             if (!usedKinds.has(k.kind)) { problems.push(`edgeKinds lists "${k.kind}", which no edge uses`); }

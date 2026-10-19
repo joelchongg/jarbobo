@@ -160,6 +160,38 @@ svg text { user-select: none; }
 #detailHot .refLoc { flex: none; font-family: Menlo, Consolas, monospace; font-size: 10.5px; opacity: .7; }
 #detailHot .refCode { margin: 0 6px 6px; }
 
+/* ---- study paths: legend, step badges ---- */
+#pathLegend {
+  position: absolute; left: 10px; bottom: 10px; z-index: 40; max-width: 320px;
+  background: var(--vscode-editorWidget-background, #252526);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 4px; padding: 6px 8px; font-size: 11.5px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+#pathLegend[hidden] { display: none; }
+#pathLegend .legendTitle { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; opacity: .6; padding: 0 2px; }
+#pathLegend .legendCount { opacity: .55; font-size: 10.5px; }
+#pathLegend .pathRow { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 3px; cursor: pointer; }
+#pathLegend .pathRow:hover { background: rgba(128, 128, 128, .12); }
+#pathLegend .pathRow.on { background: rgba(86, 156, 214, .2); }
+#pathLegend .pathSwatch { flex: none; width: 10px; height: 10px; border-radius: 5px; }
+#pathLegend .pathFirst {
+  font-size: 9.5px; padding: 0 5px; border-radius: 6px; margin-left: auto;
+  border: 1px solid var(--vscode-textLink-foreground, #3794ff); color: var(--vscode-textLink-foreground, #3794ff);
+}
+#pathLegend .pathNav { display: flex; align-items: center; gap: 6px; padding: 4px 2px 0; font-size: 11px; }
+#pathLegend .pathNav[hidden] { display: none; }
+#pathLegend .pathNav button {
+  background: transparent; border: 1px solid var(--vscode-panel-border, #3c3c3c); color: inherit;
+  border-radius: 3px; padding: 0 7px; cursor: pointer; font-size: 10px; line-height: 18px;
+}
+.cyStep {
+  position: absolute; left: 0; top: 0; pointer-events: none;
+  min-width: 18px; height: 18px; line-height: 18px; padding: 0 4px; box-sizing: border-box; border-radius: 9px;
+  color: #1e1e1e; font-size: 10.5px; font-weight: 700; text-align: center;
+  font-family: -apple-system, 'Segoe UI', sans-serif;
+}
+
 /* ---- edge layers: legend toggles and "+N hidden" badges ---- */
 #edgeLegend {
   position: absolute; left: 10px; bottom: 10px; z-index: 40;
