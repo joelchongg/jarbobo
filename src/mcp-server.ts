@@ -49,6 +49,51 @@ const interactiveProps = {
     noRef: z.boolean().optional().describe('Set true to explicitly declare that this element has NO corresponding source location (an external system, a human actor, an abstract concept). Only use it when a code reference genuinely does not exist — never to save the effort of finding one.'),
 };
 
+// A component card: the summary that tells a newcomer how much of a file
+// they can skip. Shown as a collapsible panel beside the diagram.
+const cardRefProps = { file: interactiveProps.file, line: interactiveProps.line, refs: interactiveProps.refs };
+const cardProp = {
+    card: z.object({
+        purpose: z.string().describe('ONE plain sentence: what this component is FOR, before how it works.'),
+        analogy: z.string().optional().describe('One-line analogy to something the reader already knows.'),
+        terms: z.array(z.object({
+            term: z.string(),
+            meaning: z.string().describe('What the term is FOR, not its type.'),
+        })).optional().describe('2-4 words the code uses everywhere. Only if the component has its own vocabulary.'),
+        pseudocode: z.array(z.object({
+            title: z.string().describe('The path or entry point, e.g. "path 1 · a transaction arrives".'),
+            status: z.string().optional().describe('Where this path stands, e.g. "this diagram", "next", "drawn: <diagram id>".'),
+            lines: z.array(z.object({
+                text: z.string().describe('One line saying what is DECIDED here. Indent with leading spaces.'),
+                step: z.number().int().optional().describe('1-based number of the message in THIS diagram that this line corresponds to. Clicking the line focuses that step.'),
+                ...cardRefProps,
+            })),
+        })).optional().describe('The whole component in ~10-20 lines, one block per path or entry point.'),
+        io: z.array(z.object({
+            direction: z.enum(['in', 'out']),
+            link: z.string().describe('The link or channel name, or how it travels when it is not a message (shared memory, a flag).'),
+            what: z.string(),
+            ...cardRefProps,
+        })).optional().describe('Important inputs and outputs only. Group setup inputs (config, peers, epochs) into one "skip for now" row.'),
+        blackBox: z.array(z.object({
+            name: z.string(),
+            what: z.string().describe('A few words on what it does, e.g. "batch in, FEC sets out".'),
+            ...cardRefProps,
+        })).optional().describe('Libraries, alternate paths, metrics and init the reader should NOT open yet.'),
+        goodEnough: z.string().optional().describe('One line: the 2-3 things the reader should be able to explain to call this component done.'),
+        readingOrder: z.array(z.object({
+            text: z.string().describe('What is in this range and why to read it (or why to skip it).'),
+            skip: z.boolean().optional().describe('True for code named only so the reader knows to skip it.'),
+            ...cardRefProps,
+        })).optional().describe('Only the lines that matter, in reading order, with skipped code named.'),
+        questions: z.array(z.object({
+            q: z.string(),
+            answer: z.string().optional().describe('Hidden until the reader asks for it.'),
+            ...cardRefProps,
+        })).optional().describe('2-4 check questions: answering them means this component is understood well enough.'),
+    }).optional().describe('COMPONENT CARD, shown as a collapsible panel beside the diagram when it opens. Add one when the diagram is the reading companion for a component (one message\'s trip through a file): it lets the reader skip most of the file safely. Fill it from code you READ; link lines, rows and questions to code with refs.'),
+};
+
 const idProp = {
     id: z.string().optional().describe('To EDIT an existing diagram: pass its id (returned when it was created, or found via list_diagrams). The new content is saved as the next version and the diagram\'s existing tab updates in place — no new tab. The user\'s hand-arranged element positions carry forward automatically, keyed by element id — keep ids stable across edits. Omit to create a new diagram in a new tab. Users asking for edits mean the LATEST version unless they name one.'),
     baseVersion: z.number().int().optional().describe('Only with `id`: carry the hand-arranged layout from THIS version instead of the latest one. Use when the user asks to edit starting from an older version (e.g. "go back to v6 and add X" → open_diagram(id, 6) for the content, then resubmit with baseVersion: 6). Content always comes from the spec you submit; baseVersion only selects which version\'s arrangement is inherited.'),
@@ -299,6 +344,18 @@ function attachAnchors(diagram: Record<string, unknown>) {
         const arr = diagram[key];
         if (Array.isArray(arr)) { arr.forEach((el) => visit(el as Record<string, unknown>)); }
     }
+    const card = diagram.card as Record<string, unknown> | undefined;
+    if (card) {
+        for (const key of ['io', 'blackBox', 'readingOrder', 'questions']) {
+            const arr = card[key];
+            if (Array.isArray(arr)) { arr.forEach((el) => visit(el as Record<string, unknown>)); }
+        }
+        if (Array.isArray(card.pseudocode)) {
+            for (const block of card.pseudocode as Array<{ lines?: unknown[] }>) {
+                (block.lines ?? []).forEach((el) => visit(el as Record<string, unknown>));
+            }
+        }
+    }
 }
 
 async function deliver(diagram: Record<string, unknown>, editId?: string, baseVersion?: number): Promise<Delivery> {
@@ -523,6 +580,7 @@ server.registerTool(
                 from: z.number().int().describe('Index of the first message inside the frame (0-based).'),
                 to: z.number().int().describe('Index of the last message inside the frame (inclusive).'),
             })).optional(),
+            ...cardProp,
         },
     },
     async (args) => {
@@ -533,6 +591,13 @@ server.registerTool(
             if (!ids.has(m.from)) { problems.push(`message ${i} references unknown participant "${m.from}"`); }
             if (!ids.has(m.to)) { problems.push(`message ${i} references unknown participant "${m.to}"`); }
         });
+        for (const block of spec.card?.pseudocode ?? []) {
+            for (const l of block.lines) {
+                if (l.step !== undefined && (l.step < 1 || l.step > spec.messages.length)) {
+                    problems.push(`card pseudocode line "${l.text.trim()}" has step ${l.step}; steps are 1-based message numbers (1..${spec.messages.length})`);
+                }
+            }
+        }
         for (const f of spec.frames ?? []) {
             if (f.from < 0 || f.to >= spec.messages.length || f.from > f.to) {
                 problems.push(`frame "${f.kind}" has invalid range ${f.from}..${f.to} (messages: 0..${spec.messages.length - 1})`);

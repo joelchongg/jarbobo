@@ -350,6 +350,186 @@
     }
   });
 
+  // ---------------------------------------------------------------- component card
+  // A diagram's `card` — purpose, the whole component as pseudocode, I/O,
+  // what to black-box, reading order, check questions — in a collapsible
+  // panel on the left. Pseudocode lines with a `step` focus that message;
+  // anything with refs opens its code.
+
+  const cardPanel = document.createElement('aside');
+  cardPanel.id = 'card';
+  cardPanel.hidden = true;
+  document.body.appendChild(cardPanel);
+  const btnCard = document.createElement('button');
+  btnCard.className = 'tbtn';
+  btnCard.id = 'btnCard';
+  btnCard.textContent = 'card';
+  btnCard.title = 'Show or hide the component card';
+  btnCard.hidden = true;
+  if ($('#btnTarget')) { $('#btnTarget').before(btnCard); }
+
+  // The reader's last show/hide choice, kept per viewer.
+  let cardWanted = true;
+  try { cardWanted = localStorage.getItem('jarbobo.cardHidden') !== '1'; } catch { /* storage unavailable */ }
+  function setCardShown(shown) {
+    cardWanted = shown;
+    cardPanel.hidden = !shown;
+    btnCard.classList.toggle('on', shown);
+    try { localStorage.setItem('jarbobo.cardHidden', shown ? '0' : '1'); } catch { /* storage unavailable */ }
+  }
+  btnCard.addEventListener('click', () => setCardShown(cardPanel.hidden));
+
+  function renderCard(d) {
+    const card = d.card;
+    cardPanel.innerHTML = '';
+    btnCard.hidden = !card;
+    if (!card) { cardPanel.hidden = true; return; }
+    cardPanel.hidden = !cardWanted;
+    btnCard.classList.toggle('on', cardWanted);
+
+    const el = (tag, cls, text) => {
+      const e = document.createElement(tag);
+      if (cls) { e.className = cls; }
+      if (text !== undefined) { e.textContent = text; }
+      return e;
+    };
+    // a "file:lines ↗" link for anything with refs, or null
+    const refLink = (x, text) => {
+      const refs = getRefs(x);
+      if (!refs.length) { return null; }
+      const loc = refLoc(refs[0]);
+      const a = el('button', 'cardRef', text || ((refs[0].file.split('/').pop() || refs[0].file) + (loc ? ':' + loc : '') + ' ↗'));
+      a.title = 'Open ' + refDisplay(refs[0]);
+      a.onclick = (e) => { e.stopPropagation(); openRef(refs[0], refs); };
+      return a;
+    };
+    const section = (title) => { cardPanel.appendChild(el('h3', 'cardH', title)); };
+
+    const close = el('button', 'cardClose', '✕');
+    close.title = 'Hide the card (the titlebar "card" button brings it back)';
+    close.onclick = () => setCardShown(false);
+    cardPanel.appendChild(close);
+    cardPanel.appendChild(el('div', 'kind', 'component card'));
+    cardPanel.appendChild(el('p', 'cardPurpose', card.purpose || ''));
+    if (card.analogy) { cardPanel.appendChild(el('p', 'cardAnalogy', card.analogy)); }
+
+    if (card.terms && card.terms.length) {
+      section('Key terms');
+      const t = el('table', 'cardTable');
+      card.terms.forEach((x) => {
+        const tr = el('tr');
+        tr.appendChild(el('td', 'cardTerm', x.term));
+        tr.appendChild(el('td', '', x.meaning));
+        t.appendChild(tr);
+      });
+      cardPanel.appendChild(t);
+    }
+
+    if (card.pseudocode && card.pseudocode.length) {
+      section('The whole component');
+      card.pseudocode.forEach((block) => {
+        const head = el('div', 'cardBlockHead', block.title);
+        if (block.status) { head.appendChild(el('span', 'cardStatus', block.status)); }
+        cardPanel.appendChild(head);
+        const code = el('div', 'cardCode');
+        (block.lines || []).forEach((line) => {
+          const row = el('div', 'cardLine');
+          // leading spaces become a hanging indent, so wrapped lines stay nested
+          const indent = /^\s*/.exec(line.text)[0].length;
+          const text = el('span', 'cardLineText', line.text.trimStart());
+          text.style.paddingLeft = indent + 'ch';
+          row.appendChild(text);
+          const refs = getRefs(line);
+          if (line.step) {
+            row.classList.add('linked');
+            row.appendChild(el('span', 'cardStep', 'step ' + line.step));
+            row.title = 'Focus step ' + line.step + ' in the diagram and open its code';
+            row.onclick = () => { if (seqFocus) { seqFocus.focus(line.step - 1); } };
+          } else if (refs.length) {
+            row.classList.add('linked');
+            row.title = 'Open ' + refDisplay(refs[0]);
+            row.onclick = () => openRef(refs[0], refs);
+          }
+          code.appendChild(row);
+        });
+        cardPanel.appendChild(code);
+      });
+    }
+
+    if (card.io && card.io.length) {
+      section('In and out');
+      const t = el('table', 'cardTable');
+      card.io.forEach((x) => {
+        const tr = el('tr');
+        tr.appendChild(el('td', 'cardDir', x.direction === 'in' ? '→ in' : 'out →'));
+        tr.appendChild(el('td', 'cardMono', x.link));
+        tr.appendChild(el('td', '', x.what));
+        const td = el('td');
+        const link = refLink(x);
+        if (link) { td.appendChild(link); }
+        tr.appendChild(td);
+        t.appendChild(tr);
+      });
+      cardPanel.appendChild(t);
+    }
+
+    if (card.blackBox && card.blackBox.length) {
+      section('Treat as a black box');
+      const ul = el('ul', 'cardList');
+      card.blackBox.forEach((x) => {
+        const li = el('li');
+        li.appendChild(el('span', 'cardMono', x.name));
+        li.appendChild(document.createTextNode(' — ' + x.what + ' '));
+        const link = refLink(x, '↗');
+        if (link) { li.appendChild(link); }
+        ul.appendChild(li);
+      });
+      cardPanel.appendChild(ul);
+    }
+
+    if (card.goodEnough) {
+      const g = el('div', 'cardGood');
+      g.appendChild(el('strong', '', 'Good enough when you can explain: '));
+      g.appendChild(document.createTextNode(card.goodEnough));
+      cardPanel.appendChild(g);
+    }
+
+    if (card.readingOrder && card.readingOrder.length) {
+      section('Reading order');
+      const ol = el('ol', 'cardList');
+      card.readingOrder.forEach((x) => {
+        const li = el('li', x.skip ? 'skip' : '');
+        const link = refLink(x);
+        if (link) { li.appendChild(link); li.appendChild(document.createTextNode(' ')); }
+        if (x.skip) { li.appendChild(el('span', 'cardSkip', 'skip')); }
+        li.appendChild(document.createTextNode(x.text));
+        ol.appendChild(li);
+      });
+      cardPanel.appendChild(ol);
+    }
+
+    if (card.questions && card.questions.length) {
+      section('Check yourself');
+      const ol = el('ol', 'cardList');
+      card.questions.forEach((x) => {
+        const li = el('li');
+        li.appendChild(el('div', 'cardQ', x.q));
+        if (x.answer) {
+          const ans = el('div', 'cardAnswer', x.answer);
+          ans.hidden = true;
+          const link = refLink(x, 'see the code ↗');
+          if (link) { ans.appendChild(document.createTextNode(' ')); ans.appendChild(link); }
+          const show = el('button', 'cardShow', 'show answer');
+          show.onclick = () => { ans.hidden = !ans.hidden; show.textContent = ans.hidden ? 'show answer' : 'hide answer'; };
+          li.appendChild(show);
+          li.appendChild(ans);
+        }
+        ol.appendChild(li);
+      });
+      cardPanel.appendChild(ol);
+    }
+  }
+
   // ---------------------------------------------------------------- titlebar buttons
 
   const btnTarget = $('#btnTarget');
@@ -599,7 +779,10 @@
     svg.setAttribute('width', '100%');
     svg.setAttribute('height', '100%');
     let k = 1;
-    const tx0 = natW < stage.clientWidth ? (stage.clientWidth - natW) / 2 : 0;
+    // start clear of the component card when it is open on the left
+    const inset = cardPanel.hidden ? 0 : cardPanel.offsetWidth;
+    const room = stage.clientWidth - inset;
+    const tx0 = inset + (natW < room ? (room - natW) / 2 : 0);
     let tx = tx0, ty = 0;
     const apply = () => { vp.setAttribute('transform', `translate(${tx} ${ty}) scale(${k})`); };
     apply();
@@ -993,6 +1176,7 @@
     activeOps = null;
     seqFocus = null;
     focusHint.hidden = true;
+    renderCard(d);
     $('#title').textContent = d.title || '';
     $('#title').title = d.title || '';
     const diagramType = {
@@ -1966,10 +2150,11 @@
       const st = activeOps.getState();
       const midX = geom.self ? c[geom.a] + 60 : (c[geom.a] + c[geom.b]) / 2;
       const sx = st.tx + midX * st.k, sy = st.ty + geom.y * st.k;
-      const visibleW = stage.clientWidth - (detail.hidden ? 0 : detail.offsetWidth);
+      const left = cardPanel.hidden ? 0 : cardPanel.offsetWidth;
+      const right = stage.clientWidth - (detail.hidden ? 0 : detail.offsetWidth);
       let { tx, ty } = st;
       if (sy < 70 || sy > stage.clientHeight - 70) { ty = stage.clientHeight * 0.35 - geom.y * st.k; }
-      if (sx < 40 || sx > visibleW - 40) { tx = visibleW * 0.45 - midX * st.k; }
+      if (sx < left + 40 || sx > right - 40) { tx = left + (right - left) * 0.45 - midX * st.k; }
       if (tx !== st.tx || ty !== st.ty) { activeOps.setState({ tx, ty, k: st.k }); }
     };
     const focusMessage = (i, opts) => {
@@ -2013,6 +2198,7 @@
         do { i += delta; } while (i >= 0 && i < ms.length && !messageGeometries[i]);
         if (i >= 0 && i < ms.length) { focusMessage(i, { step: true }); }
       },
+      focus(i) { if (messageGeometries[i]) { focusMessage(i, { step: true }); } },
       clear: clearFocus,
     };
     if (seqFocusState.diagram === d && seqFocusState.index !== null) { focusMessage(seqFocusState.index, {}); }

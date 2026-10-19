@@ -112,9 +112,13 @@ together:
     two levels of frame nesting; end each call with a `reply` so activation
     bars close; put long explanations in `detail`, keep `note`s to a few
     words and use them sparingly.
-- **A component card in chat, before any line-level detail.** This is what
-  lets the learner skip most of the file safely, so lead with it, in this
-  order:
+- **A component card, before any line-level detail.** This is what lets the
+  learner skip most of the file safely, so lead with it. Put it in the path
+  diagram's `card` field, where it stays open beside the diagram instead of
+  scrolling away in chat: give pseudocode lines a `step` (the 1-based message
+  number they correspond to) and give I/O rows, reading-order items and
+  questions `refs`. In chat, give only the purpose sentence and point to the
+  card. Its parts, in this order:
   1. **One sentence** of what the component is for, plus a one-line analogy
      (reuse the system's running analogy if there is one).
   2. **Key terms** (only if the component has its own vocabulary): a
@@ -135,12 +139,15 @@ together:
      out"). End with a **"good enough" bar**: one line of the 2–3 things
      they should be able to explain.
 - **Then the path diagram** (above), with a short note on its frames —
-  what each frame means and which steps happen *later* or rarely — plus:
+  what each frame means and which steps happen *later* or rarely — plus,
+  also in the card (`readingOrder`, `questions`):
   1. **Reading order covering only the lines that matter** (often ~150 of
      ~1,000), as line links, with skipped code named explicitly. Point out
      compiled-out code (`#if` on a macro that is never defined).
-  2. **2–3 check questions.** If they can answer them, they are done with
-     this path; one question leads into the next path or component.
+  2. **2–3 check questions**, each with its answer (hidden until the
+     learner asks) and a ref to the code that proves it. If they can answer
+     them, they are done with this path; one question leads into the next
+     path or component.
 - **For long functions, chunk the reading.** Split a big function into 2–3
   chunks of ~20–60 lines, each with READ / SKIM / SKIP ranges and *one*
   question to answer before moving on. Ask the learner to read a chunk and
@@ -152,7 +159,8 @@ together:
   asks or opens the code: the steps in diagram order with what each one
   decides.
 - **Close the component with a summary card** when the learner says they
-  get it: one sentence + analogy, the whole-component pseudocode (all
+  get it (edit the last path diagram by its `id` so its `card` becomes the
+  summary): one sentence + analogy, the whole-component pseudocode (all
   paths, now complete), the I/O table, **5–6 key ideas to keep** (the
   insights from the questions they asked along the way, not a list of
   functions), what is still unread and whether it matters, and the file

@@ -130,6 +130,75 @@ svg text { user-select: none; }
 .clickable { cursor: pointer; }
 .draggable { cursor: grab; }
 
+/* ---- component card: collapsible summary panel on the left ---- */
+#card {
+  position: absolute; top: 34px; left: 0; bottom: 0;
+  width: min(400px, 45vw); box-sizing: border-box;
+  background: var(--vscode-editorWidget-background, #252526);
+  border-right: 1px solid var(--vscode-panel-border, #3c3c3c);
+  padding: 14px 16px 24px; overflow: auto; z-index: 50;
+  font-size: 12px; line-height: 1.5;
+}
+#card[hidden] { display: none; }
+#card .kind { font-size: 10px; opacity: .6; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
+#card .cardClose {
+  position: absolute; top: 8px; right: 10px;
+  background: transparent; border: 0; color: inherit; opacity: .7; font-size: 13px; cursor: pointer;
+}
+#card .cardClose:hover { opacity: 1; }
+#card .cardPurpose { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+#card .cardAnalogy { margin: 0 0 4px; color: var(--vscode-descriptionForeground, #9d9d9d); font-style: italic; }
+#card .cardH {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--vscode-descriptionForeground, #9d9d9d); margin: 18px 0 6px;
+}
+#card .cardTable { border-collapse: collapse; width: 100%; }
+#card .cardTable td {
+  padding: 3px 6px 3px 0; vertical-align: top;
+  border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+#card .cardTerm, #card .cardMono { font-family: Menlo, Consolas, monospace; font-size: 11px; }
+#card .cardTerm { white-space: nowrap; font-weight: 600; }
+#card .cardDir { white-space: nowrap; color: var(--vscode-descriptionForeground, #9d9d9d); }
+#card .cardBlockHead { font-weight: 600; margin: 10px 0 4px; display: flex; gap: 8px; align-items: baseline; }
+#card .cardStatus {
+  font-weight: 400; font-size: 10px; padding: 0 6px; border-radius: 8px;
+  border: 1px solid var(--vscode-panel-border, #3c3c3c); color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+#card .cardCode {
+  font-family: Menlo, Consolas, monospace; font-size: 11px;
+  background: var(--vscode-editor-background, #1e1e1e); border-radius: 4px; padding: 5px 0;
+}
+#card .cardLine { display: flex; gap: 8px; padding: 1px 8px; white-space: pre-wrap; }
+#card .cardLine.linked { cursor: pointer; }
+#card .cardLine.linked:hover { background: rgba(86, 156, 214, .16); }
+#card .cardLineText { flex: 1; }
+#card .cardStep { color: var(--vscode-textLink-foreground, #3794ff); font-size: 10px; white-space: nowrap; }
+#card .cardRef {
+  background: transparent; border: 0; padding: 0; cursor: pointer; font: inherit; font-size: 11px;
+  color: var(--vscode-textLink-foreground, #3794ff); font-family: Menlo, Consolas, monospace;
+}
+#card .cardRef:hover { text-decoration: underline; }
+#card .cardList { margin: 0; padding-left: 20px; }
+#card .cardList li { margin: 3px 0; }
+#card .cardList li.skip { opacity: .6; }
+#card .cardSkip {
+  font-size: 10px; padding: 0 5px; margin-right: 5px; border-radius: 3px;
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+#card .cardGood {
+  margin: 14px 0 0; padding: 7px 10px; border-radius: 4px;
+  border-left: 3px solid var(--vscode-textLink-foreground, #3794ff); background: rgba(86, 156, 214, .08);
+}
+#card .cardQ { font-weight: 600; }
+#card .cardShow {
+  background: transparent; border: 1px solid var(--vscode-panel-border, #3c3c3c); color: inherit;
+  font-size: 10px; padding: 1px 7px; border-radius: 3px; cursor: pointer; margin: 3px 0;
+}
+#card .cardAnswer { margin: 2px 0 6px; color: var(--vscode-descriptionForeground, #9d9d9d); }
+#card .cardAnswer[hidden] { display: none; }
+#btnCard.on { background: rgba(86, 156, 214, .2); }
+
 /* ---- sequence focus: trace one message, dim the rest ---- */
 svg .jb-dim { transition: opacity .12s; }
 svg.jb-focusing .jb-dim { opacity: .16; }
