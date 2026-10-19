@@ -202,9 +202,11 @@ to it.
 - Highlight one or two study paths: give their nodes and edges a strong
   colour and number the edge labels `1 · …`, `2 · …`. Everything else stays
   default or dotted.
-- Keep only edges that tell the story. Drop request/reply pairs, status
-  broadcasts, signing and acks; say in the reply what you dropped and where the
-  full list lives.
+- Give every edge a `kind` and list the kinds in `edgeKinds`: the story
+  edges (`data`, the numbered study paths) shown, bookkeeping (request/reply
+  pairs, status broadcasts, signing, acks, startup wiring) `hidden`. The
+  learner starts with the story and turns the rest on from the legend, so
+  one diagram replaces a separate overview and detailed version.
 - Node ref = the function where the hot path *starts*, not line 1 of the file.
 - Edge ref = the line that wires the connection.
 

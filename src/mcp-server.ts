@@ -487,6 +487,7 @@ server.registerTool(
             'Layouts: "layered" (default; hierarchical, follows `direction` TB or LR — best for flows and layers), "force" (organic clusters), "grid", "circle". ' +
             'Nodes support shapes (box, ellipse, diamond=decision, hexagon, cylinder=storage), hex colors, and grouping into labelled containers (`group` + top-level `groups`) — use groups for boundaries like "CPython interpreter" vs "your .so", processes, or layers. ' +
             'Give nodes a `purpose` (a short "what it is for" line shown under the label) and groups a `description` (what happens inside and when) — they turn a wall of names into something a newcomer can read at a glance. ' +
+            'Over ~20 edges, give edges a `kind` and list the kinds in `edgeKinds`, hiding the bookkeeping ones: the reader starts with the story and turns the rest on from the legend. ' +
             'Edges support labels, styles (solid, dashed, dotted), arrowheads (triangle, open, none) and colors — e.g. dashed+open for indirect/async relations, red for error paths. ' +
             'EVERY node and edge is interactive: `tooltip` (hover), `detail` (click → side panel), `file`+`line` (click → side panel shows the code; cmd/ctrl+click → opens source in the editor), `href` (click → opens URL). Use these aggressively: short labels on the diagram, explanation in tooltip/detail, and source locations (with their role explained) on anything that corresponds to code. ' +
             'Consider the semantic schemas from the server instructions (functional / state transition / shared state / pub-sub / resource lifecycle) — they define what node and edge refs should point at for common diagram intents; they are suggestions, not requirements.',
@@ -517,8 +518,14 @@ server.registerTool(
                 style: z.enum(['solid', 'dashed', 'dotted']).optional(),
                 arrow: z.enum(['triangle', 'open', 'none']).optional().describe('Arrowhead at the `to` end. Default triangle.'),
                 color: z.string().optional(),
+                kind: z.string().optional().describe('Edge layer, e.g. "data" (the main flow), "reply", "control", "startup", "security". The viewer shows a legend with a toggle per kind, so one diagram serves both the first look and the detailed reading.'),
                 ...interactiveProps,
             })).optional(),
+            edgeKinds: z.array(z.object({
+                kind: z.string().describe('A value used in edges[].kind.'),
+                label: z.string().optional().describe('Legend text, e.g. "data flow (the story)". Defaults to the kind.'),
+                hidden: z.boolean().optional().describe('Start with this layer hidden. Hide bookkeeping (replies, status, startup wiring) so the first look shows only the edges that tell the story.'),
+            })).optional().describe('Legend order and starting visibility for edge kinds. Kinds used on edges but not listed here are shown, after the listed ones.'),
         },
     },
     async (args) => {
@@ -532,6 +539,10 @@ server.registerTool(
         }
         for (const n of spec.nodes) {
             if (n.group && !groupIds.has(n.group)) { problems.push(`node "${n.id}" references unknown group "${n.group}"`); }
+        }
+        const usedKinds = new Set((spec.edges ?? []).map(e => e.kind).filter(Boolean));
+        for (const k of spec.edgeKinds ?? []) {
+            if (!usedKinds.has(k.kind)) { problems.push(`edgeKinds lists "${k.kind}", which no edge uses`); }
         }
         checkRefs('node(s)', spec.nodes.map(n => ({ name: n.id, ...n })), problems);
         // edges carry meaning too (call sites, transitions, medium declarations)

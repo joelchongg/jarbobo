@@ -559,6 +559,26 @@
     btnPurpose.classList.toggle('on', purposeShown);
   }
 
+  // ---------------------------------------------------------------- edge layers
+  // Graph edges with a `kind` get a legend with a toggle per kind. Hidden
+  // kinds are remembered per diagram, per viewer.
+
+  const edgeLegend = document.createElement('div');
+  edgeLegend.id = 'edgeLegend';
+  edgeLegend.hidden = true;
+  document.body.appendChild(edgeLegend);
+  const layerKey = (d) => 'jarbobo.edgeLayers:' + (d._id || d.title || '');
+  function loadHiddenKinds(d) {
+    try {
+      const saved = localStorage.getItem(layerKey(d));
+      if (saved) { return new Set(JSON.parse(saved)); }
+    } catch { /* storage unavailable or bad JSON: fall back to the diagram's defaults */ }
+    return new Set((d.edgeKinds || []).filter((k) => k.hidden).map((k) => k.kind));
+  }
+  function saveHiddenKinds(d, hidden) {
+    try { localStorage.setItem(layerKey(d), JSON.stringify([...hidden])); } catch { /* storage unavailable */ }
+  }
+
   // ---------------------------------------------------------------- search
   // ⌘F / Ctrl+F (or "/") searches the diagram: matches light up with their
   // neighbours, everything else dims; Enter / ⇧Enter step through them.
@@ -1052,7 +1072,7 @@
         P.push(`<text x="${(b.x1 + ox + b.w / 2).toFixed(1)}" y="${(b.y1 + oy + 13).toFixed(1)}" text-anchor="middle" font-size="11" font-family="sans-serif" fill="${escX(FG)}">${escX(n.data('label'))}</text>`);
       }
     });
-    cy.edges().forEach((e) => {
+    cy.edges().not('.kHidden').forEach((e) => {
       const s = e.source().position(), t = e.target().position();
       // clip to the drawn box: outer dims include the node style's padding
       const p1 = clipToBox(s, t, { w: e.source().outerWidth(), h: e.source().outerHeight() });
@@ -1334,6 +1354,7 @@
     renderCard(d);
     updatePurposeBtn(d);
     searchOps = null;
+    edgeLegend.hidden = true;
     $('#title').textContent = d.title || '';
     $('#title').title = d.title || '';
     const diagramType = {
@@ -1419,7 +1440,7 @@
         ekey: edgeKey(e.from, e.to, e.label || ''),
         lstyle: e.style || 'solid',
         arrow: e.arrow === 'open' ? 'vee' : e.arrow === 'none' ? 'none' : 'triangle',
-        color: e.color || MUTED, _item: e, mx: 0, my: 0,
+        color: e.color || MUTED, _item: e, mx: 0, my: 0, kind: e.kind || '',
       },
     }));
 
@@ -1500,6 +1521,8 @@
         { selector: ':parent[descr]', style: { 'text-margin-y': 'data(lmy)' } },
         // group labels are short names; keep them on one line
         { selector: ':parent', style: { 'text-max-width': 1000 } },
+        // edge layers switched off in the legend
+        { selector: '.kHidden', style: { display: 'none' } },
         // search: matches glow, everything unrelated fades
         { selector: '.sFaded', style: { opacity: 0.13 } },
         { selector: '.sMatch', style: { 'underlay-color': '#e5c07b', 'underlay-padding': 5, 'underlay-opacity': 0.28, 'underlay-shape': 'round-rectangle' } },
@@ -1759,8 +1782,73 @@
           el.style.transform = `translate(${p.x - w / 2}px, ${top}px)`;
         }
       });
+      badges.forEach(({ n, el }) => {
+        if (el.hidden) { return; }
+        const bb = n.renderedBoundingBox({ includeLabels: false });
+        el.style.opacity = n.hasClass('sFaded') ? '0.15' : '';
+        el.style.transform = `translate(${bb.x2 - 10}px, ${bb.y1 - 8}px)`;
+      });
     };
-    if (placed.length) {
+
+    // ---- edge layers: legend toggles, "+N hidden" badges on nodes ---------
+    const kindsUsed = [...new Set(cy.edges().map((e) => e.data('kind')).filter(Boolean))];
+    const kindOrder = [
+      ...(d.edgeKinds || []).map((k) => k.kind).filter((k) => kindsUsed.includes(k)),
+      ...kindsUsed.filter((k) => !(d.edgeKinds || []).some((x) => x.kind === k)),
+    ];
+    const hiddenKinds = loadHiddenKinds(d);
+    const badges = [];
+    if (kindOrder.length) {
+      cy.nodes().forEach((n) => {
+        if (n.isParent()) { return; }
+        const el = document.createElement('div');
+        el.className = 'cyBadge';
+        el.addEventListener('mousemove', (e) => showItemTip({ tooltip: el.dataset.tip }, e.clientX, e.clientY, false));
+        el.addEventListener('mouseleave', hideTip);
+        overlay.appendChild(el);
+        badges.push({ n, el });
+      });
+    }
+    const applyLayers = () => {
+      cy.batch(() => {
+        cy.edges().forEach((e) => e.toggleClass('kHidden', hiddenKinds.has(e.data('kind'))));
+      });
+      badges.forEach(({ n, el }) => {
+        const hiddenEdges = n.connectedEdges('.kHidden');
+        el.textContent = hiddenEdges.length ? '+' + hiddenEdges.length : '';
+        el.hidden = !hiddenEdges.length;
+        const byKind = {};
+        hiddenEdges.forEach((e) => { byKind[e.data('kind')] = (byKind[e.data('kind')] || 0) + 1; });
+        el.dataset.tip = hiddenEdges.length + ' hidden edge' + (hiddenEdges.length > 1 ? 's' : '') + ': '
+          + Object.entries(byKind).map(([k, c]) => `${k} ${c}`).join(', ') + ' (turn them on in the legend)';
+      });
+    };
+    if (kindOrder.length) {
+      edgeLegend.innerHTML = '';
+      edgeLegend.appendChild(Object.assign(document.createElement('div'), { className: 'legendTitle', textContent: 'edges' }));
+      kindOrder.forEach((kind) => {
+        const spec = (d.edgeKinds || []).find((k) => k.kind === kind);
+        const count = cy.edges().filter((e) => e.data('kind') === kind).length;
+        const row = document.createElement('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = !hiddenKinds.has(kind);
+        box.addEventListener('change', () => {
+          if (box.checked) { hiddenKinds.delete(kind); } else { hiddenKinds.add(kind); }
+          saveHiddenKinds(d, hiddenKinds);
+          applyLayers();
+          if (!searchBox.hidden) { runSearch(); }
+        });
+        row.appendChild(box);
+        row.appendChild(document.createTextNode(' ' + ((spec && spec.label) || kind) + ' '));
+        row.appendChild(Object.assign(document.createElement('span'), { className: 'legendCount', textContent: String(count) }));
+        edgeLegend.appendChild(row);
+      });
+      edgeLegend.hidden = false;
+      applyLayers();
+    }
+
+    if (placed.length || badges.length) {
       cy.on('render', () => { if (!placePending) { placePending = true; requestAnimationFrame(placeOverlay); } });
       cy.ready(placeOverlay);
     }
@@ -1769,7 +1857,7 @@
     let searchHits = [];
     searchOps = {
       run(q, o) {
-        searchHits = cy.elements().filter((el) => matchesQuery(searchText(el.data('_item'),
+        searchHits = cy.elements().not('.kHidden').filter((el) => matchesQuery(searchText(el.data('_item'),
           [el.data('label'), el.isNode() ? el.id() : '', el.data('purpose'), el.data('gdesc')], o.detail), q)).toArray();
         if (!searchHits.length) { return 0; }
         searchHits = rankHits(searchHits, q,
@@ -1781,7 +1869,7 @@
         searchHits.forEach((el) => {
           lit = lit.union(el);
           if (el.isNode() && el.isParent()) { lit = lit.union(el.descendants()); }
-          else if (el.isNode()) { lit = lit.union(el.connectedEdges()).union(el.connectedEdges().connectedNodes()); }
+          else if (el.isNode()) { const es = el.connectedEdges().not('.kHidden'); lit = lit.union(es).union(es.connectedNodes()); }
           else { lit = lit.union(el.connectedNodes()); }
         });
         lit = lit.union(lit.nodes().ancestors());
