@@ -83,7 +83,9 @@ export function serializeContainer(c: Container): string {
 
 export function writeContainer(file: string, c: Container): void {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, serializeContainer(c));
+    // owner-only when created: diagrams hold your notes and copies of code
+    // lines, and many Linux hosts make home folders world-readable
+    fs.writeFileSync(file, serializeContainer(c), { mode: 0o600 });
 }
 
 /** Ids name legacy ~/.jarbobo/diagrams/<id> folders, so they must never
@@ -100,6 +102,23 @@ export function isInside(root: string, p: string): boolean {
     try { real = fs.realpathSync(p); } catch { return false; }
     try { realRoot = fs.realpathSync(root); } catch { return false; }
     return real === realRoot || real.startsWith(realRoot + path.sep);
+}
+
+/** True for a "workspace" that is really the whole machine or the whole
+ *  home folder (~, anything above it, or /). Treating it as the project
+ *  would put ~/.ssh and ~/.aws inside the workspace, so callers confine
+ *  nothing to it and read or preview nothing through it. */
+export function isBroadRoot(dir: string): boolean {
+    const real = (p: string) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+    const d = real(dir), home = real(os.homedir());
+    return d === path.parse(d).root || d === home || home.startsWith(d + path.sep);
+}
+
+/** The project folder diagrams are confined to, or undefined when there is
+ *  none: no editor workspace or git repo, or only a broad one (see above). */
+export function projectRoot(): string | undefined {
+    const root = findWorkspaceRoot() ?? process.cwd();
+    return isBroadRoot(root) ? undefined : root;
 }
 
 /** Keep diagrams out of `git status` in the repo that holds `file`, via its
@@ -226,7 +245,10 @@ export function chooseDiagramLocation(
     // diagrams over one area would otherwise all be "src", told apart only by
     // a random suffix.
     const name = opts.fileName ? slugForFile(opts.fileName.replace(/\.jarbobo$/, '')) : nameFromTitle(opts.title ?? 'diagram');
-    const root = opts.workspaceRoot ?? process.cwd();
+    // no real project (see projectRoot): stay in the current folder rather
+    // than follow refs into places like ~/.aws
+    if (!opts.workspaceRoot) { return { dir: process.cwd(), name }; }
+    const root = opts.workspaceRoot;
     const refs = collectRefFiles(diagram);
     if (!refs.length) { return { dir: root, name }; }
     const dir = refs.length === 1 || new Set(refs).size === 1 ? path.dirname(refs[0]) : longestCommonDir(refs);

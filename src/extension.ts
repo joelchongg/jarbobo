@@ -6,7 +6,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import {
     JARBOBO_EXT, walkDiagramFiles, readContainer, writeContainer, parseContainer,
-    serializeContainer, isContainerFile, stripMeta, isSafeId, isInside, type Container, type Note,
+    serializeContainer, isContainerFile, stripMeta, isSafeId, isInside, isBroadRoot, type Container, type Note,
 } from './storage.js';
 
 const HOME = path.join(os.homedir(), '.jarbobo');
@@ -389,8 +389,12 @@ function previewPath(file: string): { real: string } | { err: string } {
     if (!path.isAbsolute(file)) { return { err: 'not previewed: not an absolute path' }; }
     let real: string;
     try { real = fs.realpathSync(file); } catch { return { err: 'cannot read: file not found' }; }
-    const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    // a folder that is ~ (or above it, or /) would put ~/.ssh "inside the
+    // workspace", so it doesn't count: open the project folder itself
+    const all = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    const roots = all.filter((root) => !isBroadRoot(root));
     if (roots.some((root) => isInside(root, real))) { return { real }; }
+    if (roots.length < all.length) { return { err: 'not previewed: the open folder is your home folder (or /); open the project folder itself to preview its code' }; }
     return { err: 'not previewed: outside this workspace (use "Go to source" if you trust it)' };
 }
 

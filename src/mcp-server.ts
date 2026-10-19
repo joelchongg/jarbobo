@@ -21,7 +21,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
     JARBOBO_EXT, findWorkspaceRoot, walkDiagramFiles, chooseDiagramLocation, readContainer, writeContainer,
-    isSafeId, isInside, ensureGitExcluded, type Note,
+    isSafeId, isInside, ensureGitExcluded, projectRoot, type Note,
 } from './storage.js';
 
 const HOME = path.join(os.homedir(), '.jarbobo');
@@ -325,16 +325,17 @@ function carryLayout(prevRaw: unknown, diagram: Record<string, unknown>): Record
 // their original positions and takes everything in between. Deliberately
 // simple — if the anchored lines themselves were rewritten, it falls back to
 // the saved numbers.
-// Only files inside the workspace are snapshotted: the snapshot is saved into
+// Only files inside the project are snapshotted: the snapshot is saved into
 // the diagram file, and a ref to ~/.aws/credentials must not copy its lines.
+// With no real project (started from ~ or /, see projectRoot) nothing is.
 const ANCHOR_MAX_BYTES = 5_000_000;
 function attachAnchors(diagram: Record<string, unknown>) {
-    const root = findWorkspaceRoot() ?? process.cwd();
+    const root = projectRoot();
     const fileCache = new Map<string, string[] | null>();
     const linesOf = (file: string): string[] | null => {
         if (!fileCache.has(file)) {
             try {
-                if (!isInside(root, file)) { throw new Error('outside the workspace'); }
+                if (!root || !isInside(root, file)) { throw new Error('outside the project'); }
                 const st = fs.statSync(file);
                 if (!st.isFile() || st.size > ANCHOR_MAX_BYTES) { throw new Error('not a regular file'); }
                 fileCache.set(file, fs.readFileSync(file, 'utf8').split(/\r?\n/));
@@ -449,7 +450,7 @@ async function deliver(diagram: Record<string, unknown>, editId?: string, baseVe
         // used for edits/lookups regardless of where the file sits or what
         // it's named; the two are independent on purpose.
         const { dir, name } = chooseDiagramLocation(diagram, {
-            workspaceRoot: findWorkspaceRoot(), title: String(diagram.title ?? 'diagram'), fileName,
+            workspaceRoot: projectRoot(), title: String(diagram.title ?? 'diagram'), fileName,
         });
         // another diagram may already have that name — number this one
         // ("-2", "-3") rather than clobber it or add random characters
